@@ -55,7 +55,8 @@ class DraftAnalyzer:
 
     def classify_face(
         self,
-        draft_angle
+        draft_angle,
+        threshold_deg=3.0
     ):
 
         if draft_angle is None:
@@ -64,14 +65,15 @@ class DraftAnalyzer:
         if draft_angle < 0:
             return "UNDERCUT"
 
-        if draft_angle < 3:
+        if draft_angle < threshold_deg:
             return "WARNING"
 
         return "SAFE"
 
     def analyze_direction(
         self,
-        pull_direction
+        pull_direction,
+        threshold_deg=3.0
     ):
 
         results = []
@@ -87,7 +89,8 @@ class DraftAnalyzer:
 
             classification = (
                 self.classify_face(
-                    draft_angle
+                    draft_angle,
+                    threshold_deg
                 )
             )
 

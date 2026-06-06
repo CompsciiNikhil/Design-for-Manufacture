@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from undercut_detector import UndercutDetector
+
 
 
 class MoldDirectionAnalyzer:
@@ -15,13 +15,25 @@ class MoldDirectionAnalyzer:
 
         directions = []
 
+        # Include principal axes (positive and negative)
+        for axis in [
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 0.0, -1.0]),
+            np.array([0.0, 1.0, 0.0]),
+            np.array([0.0, -1.0, 0.0]),
+            np.array([1.0, 0.0, 0.0]),
+            np.array([-1.0, 0.0, 0.0]),
+        ]:
+            directions.append(axis)
+
         golden_angle = math.pi * (
             3.0 - math.sqrt(5.0)
         )
 
+        # Generate both hemispheres to be thorough
         for i in range(n_samples):
-
-            z = i / float(n_samples - 1)
+            # Map i to [-1, 1] for full sphere
+            z = -1.0 + (2.0 * i) / float(n_samples - 1)
 
             radius = math.sqrt(
                 max(0.0, 1.0 - z * z)
@@ -129,6 +141,7 @@ class MoldDirectionAnalyzer:
                 undercut_area += face.area
                 undercut_faces += 1
 
+        # Calculate a primary score based on area and face counts
         score = (
             alignment_score
             +
@@ -140,6 +153,15 @@ class MoldDirectionAnalyzer:
             -
             25.0 * undercut_faces
         )
+
+        # Prioritize vertical-ish (Z-aligned) directions to avoid
+        # horizontal directions, which are often less practical or represent
+        # a sideways mold opening.
+        z_component = abs(direction[2])
+        total_area = safe_area + warning_area + undercut_area
+        if total_area > 0:
+            # Add a significant bonus for Z-alignment (up to 5.0 * total_area)
+            score += 5.0 * z_component * total_area
 
         return score
 
@@ -155,7 +177,6 @@ class MoldDirectionAnalyzer:
         )
 
         best_direction = None
-
         best_score = -1e18
 
         for direction in candidates:
@@ -169,7 +190,6 @@ class MoldDirectionAnalyzer:
             if score > best_score:
 
                 best_score = score
-
                 best_direction = direction
 
         print(
@@ -177,7 +197,27 @@ class MoldDirectionAnalyzer:
             f"{best_score:.3f}"
         )
 
-        return (
-            best_direction,
-            best_score
-        )
+        # Calculate confidence score
+        # Confidence is higher when we have fewer undercuts and more safe areas.
+        from draft_analysis import DraftAnalyzer
+        draft_analyzer = DraftAnalyzer(self.part)
+        draft_results = draft_analyzer.analyze_direction(best_direction)
+        
+        total_area = 0.0
+        safe_area = 0.0
+        undercut_area = 0.0
+        
+        for face, result in zip(self.part.faces, draft_results):
+            total_area += face.area
+            if result["classification"] == "SAFE":
+                safe_area += face.area
+            elif result["classification"] == "UNDERCUT":
+                undercut_area += face.area
+
+        confidence = 0.0
+        if total_area > 0:
+            confidence = (total_area - undercut_area) / total_area
+            # reduce confidence if safe area is very low
+            confidence *= (0.5 + 0.5 * (safe_area / total_area))
+
+        return best_direction, confidence
