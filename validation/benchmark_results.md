@@ -1,6 +1,6 @@
 # Validation & Benchmarking Plan: DfM Intelligence Agent
 
-This document defines the validation, benchmarking, and quality assurance framework for the DfM (Design for Manufacturing) Intelligence Agent. It challenges the correctness of every module, provides a detailed comparison against industry-standard CAD/CAE tools, and defines a step-by-step verification workflow for the Bosch Hackathon.
+This document defines the validation, benchmarking, and quality assurance framework for the DfM (Design for Manufacturing) Intelligence Agent. It challenges the correctness of every module, provides a detailed comparison against industry-standard CAD/CAE tools, and defines a step-by-step verification workflow for the Hackathon.
 
 ---
 

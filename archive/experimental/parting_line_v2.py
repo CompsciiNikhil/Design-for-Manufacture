@@ -19,7 +19,7 @@ class PartingLineV2:
         proj_values = list(projections.values())
         proj_min = min(proj_values) if proj_values else 0.0
         proj_max = max(proj_values) if proj_values else 0.0
-        # Check if this is the Bosch hackathon part (height around 15mm)
+        # Check if this is the hackathon part (height around 15mm)
         if abs(proj_max - 15.0) < 1.0 and abs(proj_min - 0.0) < 1.0:
             # The physical flange shelf is at Z = 10.0 mm
             proj_mid = 10.0

@@ -1,6 +1,6 @@
 # Parting Plane Comparison (Flange Split vs. Others)
 
-This document shows how the exploded mold split and parting line look when the parting plane is placed at different heights: the middle flange shelf ($Z = 10.0\text{ mm}$), right after the Bosch logo ($Z = 14.0\text{ mm}$), the top end of the part ($Z = 15.0\text{ mm}$), and above the part ($Z = 28.3\text{ mm}$).
+This document shows how the exploded mold split and parting line look when the parting plane is placed at different heights: the middle flange shelf ($Z = 10.0\text{ mm}$), right after the logo ($Z = 14.0\text{ mm}$), the top end of the part ($Z = 15.0\text{ mm}$), and above the part ($Z = 28.3\text{ mm}$).
 
 ---
 
@@ -13,7 +13,7 @@ This document shows how the exploded mold split and parting line look when the p
 *   **Parting Line Loops:** **2 clean loops** (Loop 1: 4 edges for the inner circular boss, Loop 2: 16 edges for the outer flange boundary).
 *   *Mold Feasibility*: **Excellent**. This is the standard, most cost-effective split point because it cleanly separates the cap from the legs, minimizing slides and complex tooling.
 
-### 2. Case B: $Z = 14.0\text{ mm}$ (Right After Bosch Logo)
+### 2. Case B: $Z = 14.0\text{ mm}$ (Right After Logo)
 *   **Parting Sheet (Cyan):** Sits just below the top face, right after the logo recess.
 *   **Cavity Block (Red):** A thin flat plate ($\approx 1\text{ mm}$ thick) that only forms the top flat face and the logo details.
 *   **Core Block (Blue):** A very deep block that contains the entire height of the side walls and the legs.

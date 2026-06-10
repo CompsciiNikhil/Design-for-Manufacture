@@ -42,12 +42,12 @@ def export_pdf(file_path, analysis_result):
     
     styles = getSampleStyleSheet()
     
-    # Custom styles matching Bosch theme
+    # Custom styles matching brand theme
     title_style = ParagraphStyle(
         'TitleStyle',
         parent=styles['Heading1'],
         fontSize=20,
-        textColor=colors.HexColor('#e20015'), # Bosch red
+        textColor=colors.HexColor('#e20015'), # Primary red
         spaceAfter=15
     )
     
@@ -63,7 +63,7 @@ def export_pdf(file_path, analysis_result):
     body_style = styles['Normal']
     header_col_style = ParagraphStyle('HeaderCol', parent=body_style, textColor=colors.whitesmoke, fontName='Helvetica-Bold')
     
-    story.append(Paragraph("DfM Analysis Report — Bosch DfM Advisor", title_style))
+    story.append(Paragraph("DfM Analysis Report — DfM Advisor", title_style))
     story.append(Paragraph(f"<b>Model Filename:</b> {analysis_result.filename}", body_style))
     story.append(Paragraph(f"<b>Selected Material:</b> {analysis_result.material}", body_style))
     story.append(Spacer(1, 10))

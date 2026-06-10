@@ -1,6 +1,6 @@
 # DfM Intelligence Agent: Code Cleanup Report
 
-This report summarizes the modifications carried out to clean up unused imports and obsolete references across the production codebase, professionalizing the repository for the Bosch Hackathon submission.
+This report summarizes the modifications carried out to clean up unused imports and obsolete references across the production codebase, professionalizing the repository for the Hackathon submission.
 
 No manufacturing algorithms, scoring criteria, or UI components were altered.
 

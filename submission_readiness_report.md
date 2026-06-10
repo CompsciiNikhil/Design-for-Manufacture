@@ -1,6 +1,6 @@
 # DfM Intelligence Agent: Submission Readiness Report
 
-This report evaluates the Design-for-Manufacture (DfM) project for its Bosch Hackathon submission from four engineering and design perspectives: a Bosch software engineer, a manufacturing engineer, an injection mold designer, and a hackathon judge.
+This report evaluates the Design-for-Manufacture (DfM) project for its Hackathon submission from four engineering and design perspectives: a software engineer, a manufacturing engineer, an injection mold designer, and a hackathon judge.
 
 ### Overall Readiness Score: **90 / 100**
 
@@ -8,7 +8,7 @@ This report evaluates the Design-for-Manufacture (DfM) project for its Bosch Hac
 
 ## 1. Perspectives Review
 
-### 1.1. Bosch Software Engineer
+### 1.1. Software Engineer
 *   **What is Impressive**:
     *   *Decoupled Architecture*: Complete separation of GUI logic (`dfm_gui.py`) from analytical calculations (`dfm_engine.py`).
     *   *Clean Python Environment*: Relies on standard pythonocc-core and PyQt5 libraries without custom sys.path hacks.

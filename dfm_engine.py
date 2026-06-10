@@ -45,6 +45,8 @@ class DFMEngine:
     def evaluate_pull_direction_and_split(self, direction, split_val):
         from OCC.Core.Bnd import Bnd_Box
         from OCC.Core.BRepBndLib import brepbndlib
+        from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
+        from OCC.Core.GeomAbs import GeomAbs_Cylinder
         import numpy as np
 
         d = np.array(direction, dtype=float)
@@ -53,7 +55,9 @@ class DFMEngine:
             d = d / norm_d
 
         undercut_area = 0.0
+        side_action_area = 0.0
         undercut_face_ids = []
+        side_action_face_ids = []
         core_face_ids = []
         cavity_face_ids = []
         crossing_face_ids = []
@@ -64,6 +68,17 @@ class DFMEngine:
             axis_idx = 0
         elif abs(d[1]) > 0.9:
             axis_idx = 1
+
+        # Pre-compute part bounding box for lateral protrusion size check
+        part_bbox = Bnd_Box()
+        brepbndlib.Add(self.part.shape, part_bbox)
+        if not part_bbox.IsVoid():
+            pbv = part_bbox.Get()
+            part_mins = [pbv[0], pbv[1], pbv[2]]
+            part_maxs = [pbv[3], pbv[4], pbv[5]]
+        else:
+            part_mins = [-1e9, -1e9, -1e9]
+            part_maxs = [1e9, 1e9, 1e9]
 
         for face in self.part.faces:
             face_shape = self.face_map[face.face_id]
@@ -84,36 +99,69 @@ class DFMEngine:
 
             # Bounding box-based classification
             is_undercut = False
+            is_side_action = False
+            
+            try:
+                adaptor = BRepAdaptor_Surface(face_shape)
+                if adaptor.GetType() == GeomAbs_Cylinder:
+                    cyl = adaptor.Cylinder()
+                    axis_vec = cyl.Axis().Direction()
+                    axis_dir = np.array([axis_vec.X(), axis_vec.Y(), axis_vec.Z()])
+                    cyl_r = cyl.Radius()
+                    # Lateral cylinder: axis perpendicular to pull direction
+                    if abs(np.dot(axis_dir, d)) < 0.2:
+                        # Only flag as side action if the cylinder spans a significant
+                        # portion of the part in its axial direction (>=15% of part span).
+                        # This distinguishes large protruding port-tubes from small bolt holes.
+                        for pi in range(3):
+                            if pi == axis_idx:
+                                continue
+                            pi_axis = np.zeros(3)
+                            pi_axis[pi] = 1.0
+                            # Is this perpendicular axis roughly aligned with the cylinder's axis?
+                            if abs(np.dot(axis_dir, pi_axis)) > 0.8:
+                                face_span = bbox_vals[pi + 3] - bbox_vals[pi]
+                                part_span = part_maxs[pi] - part_mins[pi]
+                                if part_span > 0 and face_span / part_span >= 0.15:
+                                    is_side_action = True
+                                    break
+            except Exception:
+                pass
+
             if face_max < split_val:
-                # CORE side (pulls along -d)
                 core_face_ids.append(face.face_id)
                 if dot_val > 1e-5:
                     is_undercut = True
             elif face_min > split_val:
-                # CAVITY side (pulls along +d)
                 cavity_face_ids.append(face.face_id)
                 if dot_val < -1e-5:
                     is_undercut = True
             else:
-                # Crossing face
                 crossing_face_ids.append(face.face_id)
                 if abs(dot_val) > 1e-5:
                     is_undercut = True
                     
-            if is_undercut:
+            if is_side_action:
+                side_action_face_ids.append(face.face_id)
+                side_action_area += face.area
+                
+            if is_undercut and not is_side_action:
                 undercut_area += face.area
                 undercut_face_ids.append(face.face_id)
                 
         return {
             "undercut_count": len(undercut_face_ids),
             "undercut_area": undercut_area,
+            "side_action_count": len(side_action_face_ids),
+            "side_action_area": side_action_area,
             "crossing_faces": len(crossing_face_ids),
             "undercut_faces": undercut_face_ids,
             "core_faces": len(core_face_ids),
             "cavity_faces": len(cavity_face_ids),
             "core_face_ids": core_face_ids,
             "cavity_face_ids": cavity_face_ids,
-            "crossing_face_ids": crossing_face_ids
+            "crossing_face_ids": crossing_face_ids,
+            "side_action_faces": side_action_face_ids
         }
 
     def optimize_parting_plane_for_axis(self, axis_name):
@@ -169,18 +217,22 @@ class DFMEngine:
 
             # Crossing ratio
             cross_ratio = stats["crossing_faces"] / total_faces
+            
+            # Side action ratio
+            side_ratio = stats["side_action_count"] / total_faces
 
-            # Moldability Score for ranking: 40% Undercut Area + 25% Undercut Count + 20% Crossing + 15% Balance
+            # Moldability Score: 35% Undercut, 20% Count, 15% Crossing, 15% Side-Action, 15% Balance
             score = (
-                0.40 * (100.0 - ratio * 100.0) +
-                0.25 * (100.0 - cnt_ratio * 100.0) +
-                0.20 * (100.0 - cross_ratio * 100.0) +
+                0.35 * (100.0 - ratio * 100.0) +
+                0.20 * (100.0 - cnt_ratio * 100.0) +
+                0.15 * (100.0 - cross_ratio * 100.0) +
+                0.15 * (100.0 - side_ratio * 100.0) +
                 0.15 * (balance * 100.0)
             )
             score = max(0.0, score)
 
-            # Parting Complexity: crossing_faces + undercut_count / 5.0
-            complexity = stats["crossing_faces"] + (stats["undercut_count"] / 5.0)
+            # Parting Complexity
+            complexity = stats["crossing_faces"] + (stats["undercut_count"] / 5.0) + (stats["side_action_count"] / 2.0)
 
             stats["balance"] = balance
             stats["moldability_score"] = score
@@ -197,12 +249,16 @@ class DFMEngine:
         best_area_ratio = best_stats["undercut_area"] / total_area
         best_count_ratio = best_stats["undercut_count"] / total_faces
         best_crossing_ratio = best_stats["crossing_faces"] / total_faces
+        best_side_count = best_stats["side_action_count"]
 
-        if best_stats["undercut_count"] == 0 and best_stats["crossing_faces"] == 0:
+        if best_stats["undercut_count"] == 0 and best_stats["crossing_faces"] == 0 and best_side_count == 0:
             classification = "MOLDABLE"
+        elif best_side_count > 0 and best_area_ratio < 0.20:
+            # Has lateral cylinder protrusions requiring side actions/sliders
+            classification = "SIDE ACTION REQUIRED"
         elif best_area_ratio < 0.05 and best_crossing_ratio < 0.25 and best_count_ratio < 0.30:
             classification = "PARTIALLY MOLDABLE"
-        elif best_area_ratio < 0.12 and best_count_ratio < 0.40:
+        elif best_area_ratio < 0.15 and best_count_ratio < 0.50:
             classification = "SIDE ACTION REQUIRED"
         else:
             classification = "NOT MOLDABLE"
@@ -212,27 +268,45 @@ class DFMEngine:
         return best_plane, best_score, best_stats
 
     def scan_parting_planes(self):
-        best_z, best_score, best_stats = self.optimize_parting_plane_for_axis("Z")
+        # Determine the best axis from self.best_direction
+        d = np.array(self.best_direction, dtype=float)
+        axis_name = "Z"
+        axis_idx = 2
+        dir_vector = [0.0, 0.0, 1.0]
+        if abs(d[0]) > 0.9:
+            axis_name = "X"
+            axis_idx = 0
+            dir_vector = [1.0, 0.0, 0.0]
+        elif abs(d[1]) > 0.9:
+            axis_name = "Y"
+            axis_idx = 1
+            dir_vector = [0.0, 1.0, 0.0]
+            
+        best_z, best_score, best_stats = self.optimize_parting_plane_for_axis(axis_name)
 
         from OCC.Core.Bnd import Bnd_Box
         from OCC.Core.BRepBndLib import brepbndlib
         bbox = Bnd_Box()
         brepbndlib.Add(self.part.shape, bbox)
-        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+        bbox_vals = bbox.Get()
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox_vals
+
+        axis_min = bbox_vals[axis_idx]
+        axis_max = bbox_vals[axis_idx + 3]
 
         heights = {
-            "Bottom": zmin + 0.05 * (zmax - zmin),
-            "Lower": zmin + 0.25 * (zmax - zmin),
+            "Bottom": axis_min + 0.05 * (axis_max - axis_min),
+            "Lower": axis_min + 0.25 * (axis_max - axis_min),
             "Middle": best_z,
-            "Upper": zmin + 0.75 * (zmax - zmin),
-            "Top": zmin + 0.95 * (zmax - zmin)
+            "Upper": axis_min + 0.75 * (axis_max - axis_min),
+            "Top": axis_min + 0.95 * (axis_max - axis_min)
         }
 
         total_area = sum(f.area for f in self.part.faces) or 1.0
         total_faces = len(self.part.faces) or 1.0
 
         def evaluate_height(z_val):
-            stats = self.evaluate_pull_direction_and_split([0, 0, 1], z_val)
+            stats = self.evaluate_pull_direction_and_split(dir_vector, z_val)
             core_cnt = stats["core_faces"]
             cavity_cnt = stats["cavity_faces"]
             max_cnt = max(1.0, max(core_cnt, cavity_cnt))
@@ -240,21 +314,27 @@ class DFMEngine:
             ratio = stats["undercut_area"] / total_area
             cnt_ratio = stats["undercut_count"] / total_faces
             cross_ratio = stats["crossing_faces"] / total_faces
+            side_ratio = stats.get("side_action_count", 0) / total_faces
             score = (
-                0.40 * (100.0 - ratio * 100.0) +
-                0.25 * (100.0 - cnt_ratio * 100.0) +
-                0.20 * (100.0 - cross_ratio * 100.0) +
+                0.35 * (100.0 - ratio * 100.0) +
+                0.20 * (100.0 - cnt_ratio * 100.0) +
+                0.15 * (100.0 - cross_ratio * 100.0) +
+                0.15 * (100.0 - side_ratio * 100.0) +
                 0.15 * (balance * 100.0)
             )
             score = max(0.0, score)
-            complexity = stats["crossing_faces"] + (stats["undercut_count"] / 5.0)
+            side_cnt = stats.get("side_action_count", 0)
+            complexity = stats["crossing_faces"] + (stats["undercut_count"] / 5.0) + (side_cnt / 2.0)
 
-            # Classification
-            if stats["undercut_count"] == 0 and stats["crossing_faces"] == 0:
+            # Classification — side-action lateral cylinders take priority
+            if stats["undercut_count"] == 0 and stats["crossing_faces"] == 0 and side_cnt == 0:
                 classification = "MOLDABLE"
+            elif side_cnt > 0 and ratio < 0.20:
+                # Has lateral cylinder protrusions requiring side actions/sliders
+                classification = "SIDE ACTION REQUIRED"
             elif ratio < 0.05 and cross_ratio < 0.25 and cnt_ratio < 0.30:
                 classification = "PARTIALLY MOLDABLE"
-            elif ratio < 0.12 and cnt_ratio < 0.40:
+            elif ratio < 0.15 and cnt_ratio < 0.50:
                 classification = "SIDE ACTION REQUIRED"
             else:
                 classification = "NOT MOLDABLE"
@@ -282,8 +362,24 @@ class DFMEngine:
         
         # 1. Optimal Mold Direction & Confidence
         if callback: callback("Optimizing Mold Direction...")
-        analyzer = MoldDirectionAnalyzer(self.part)
-        self.best_direction, self.confidence = analyzer.find_best_direction()
+        
+        # Optimize parting plane for X, Y, and Z axes to find the most moldable direction
+        x_split, x_score, x_stats = self.optimize_parting_plane_for_axis("X")
+        y_split, y_score, y_stats = self.optimize_parting_plane_for_axis("Y")
+        z_split, z_score, z_stats = self.optimize_parting_plane_for_axis("Z")
+        
+        scores = {"X": x_score, "Y": y_score, "Z": z_score}
+        best_axis = max(scores, key=scores.get)
+        
+        if best_axis == "X":
+            self.best_direction = np.array([1.0, 0.0, 0.0])
+        elif best_axis == "Y":
+            self.best_direction = np.array([0.0, 1.0, 0.0])
+        else:
+            self.best_direction = np.array([0.0, 0.0, 1.0])
+            
+        self.confidence = scores[best_axis] / 100.0
+        print(f"Optimal axis selected via parting plane scores: {best_axis} (Score: {scores[best_axis]:.2f})")
         
         # 2. Draft Analysis
         if callback: callback("Computing Draft Analysis...")
@@ -320,12 +416,26 @@ class DFMEngine:
         from OCC.Core.BRepBndLib import brepbndlib
         bbox = Bnd_Box()
         brepbndlib.Add(self.part.shape, bbox)
-        _, _, zmin, _, _, zmax = bbox.Get()
+        bbox_vals = bbox.Get()
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox_vals
 
+        from OCC.Core.gp import gp_Pln, gp_Pnt, gp_Dir
 
+        # Determine the best axis from self.best_direction
+        d = np.array(self.best_direction, dtype=float)
+        axis_name = "Z"
+        dir_vector = gp_Dir(0, 0, 1)
+        pnt_origin = gp_Pnt(0, 0, z_split)
+        if abs(d[0]) > 0.9:
+            axis_name = "X"
+            dir_vector = gp_Dir(1, 0, 0)
+            pnt_origin = gp_Pnt(z_split, 0, 0)
+        elif abs(d[1]) > 0.9:
+            axis_name = "Y"
+            dir_vector = gp_Dir(0, 1, 0)
+            pnt_origin = gp_Pnt(0, z_split, 0)
             
         # Intersect the part shape with the split plane
-        from OCC.Core.gp import gp_Pln, gp_Pnt, gp_Dir
         from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Section
         from OCC.Core.TopExp import TopExp_Explorer
         from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_VERTEX
@@ -333,7 +443,7 @@ class DFMEngine:
         from OCC.Core.BRep import BRep_Tool
         import math
         
-        pln = gp_Pln(gp_Pnt(0, 0, z_split), gp_Dir(0, 0, 1))
+        pln = gp_Pln(pnt_origin, dir_vector)
         section = BRepAlgoAPI_Section(self.part.shape, pln, True)
         section.Build()
         
@@ -344,8 +454,9 @@ class DFMEngine:
             sec_explorer.Next()
             
         # Calculate maximum radius to set dynamic thresholds relative to part bounding box center
-        cx = (bbox.Get()[0] + bbox.Get()[3]) / 2.0
-        cy = (bbox.Get()[1] + bbox.Get()[4]) / 2.0
+        cx = (bbox_vals[0] + bbox_vals[3]) / 2.0
+        cy = (bbox_vals[1] + bbox_vals[4]) / 2.0
+        cz = (bbox_vals[2] + bbox_vals[5]) / 2.0
         
         def get_edge_radius(edge):
             v_exp = TopExp_Explorer(edge, TopAbs_VERTEX)
@@ -358,7 +469,13 @@ class DFMEngine:
                 pt2 = BRep_Tool.Pnt(vertices[1])
                 mx = (pt1.X() + pt2.X()) / 2.0
                 my = (pt1.Y() + pt2.Y()) / 2.0
-                return math.sqrt((mx - cx)**2 + (my - cy)**2)
+                mz = (pt1.Z() + pt2.Z()) / 2.0
+                if axis_name == "X":
+                    return math.sqrt((my - cy)**2 + (mz - cz)**2)
+                elif axis_name == "Y":
+                    return math.sqrt((mx - cx)**2 + (mz - cz)**2)
+                else:
+                    return math.sqrt((mx - cx)**2 + (my - cy)**2)
             return 0.0
             
         # Compute maximum edge radius from center
@@ -450,7 +567,45 @@ class DFMEngine:
                 })
             return loops_out
 
+        # ----------------------------------------------------------------
+        # For the parting LINE we want the widest silhouette cross-section,
+        # which is the geometric centroid midplane (perpendicular to pull).
+        # The optimal mold-split plane (z_split) may be off-center, but the
+        # parting LINE definition is the part boundary at that midplane.
+        # Re-section at the midplane for a better parting line display.
+        # The mold split value (z_split) is still used for mold visualization.
+        # ----------------------------------------------------------------
+        if axis_name == "X":
+            midplane_val = (xmin + xmax) / 2.0
+            mid_pnt_origin = gp_Pnt(midplane_val, 0, 0)
+        elif axis_name == "Y":
+            midplane_val = (ymin + ymax) / 2.0
+            mid_pnt_origin = gp_Pnt(0, midplane_val, 0)
+        else:
+            midplane_val = (zmin + zmax) / 2.0
+            mid_pnt_origin = gp_Pnt(0, 0, midplane_val)
+
+        # Only re-section if the mold split differs significantly from the centroid
+        if abs(z_split - midplane_val) > 1.0:
+            mid_pln = gp_Pln(mid_pnt_origin, dir_vector)
+            mid_section = BRepAlgoAPI_Section(self.part.shape, mid_pln, True)
+            mid_section.Build()
+            mid_explorer = TopExp_Explorer(mid_section.Shape(), TopAbs_EDGE)
+            mid_edges = []
+            while mid_explorer.More():
+                mid_edges.append(topods.Edge(mid_explorer.Current()))
+                mid_explorer.Next()
+            # Use the midplane edges if they give more edges (richer silhouette)
+            if len(mid_edges) >= len(section_edges):
+                section_edges = mid_edges
+                edge_radii = [get_edge_radius(e) for e in section_edges]
+                max_r = max(edge_radii) if edge_radii else 1.0
+
+        # Use generous tolerance so that slightly-gapped shell edges still close
+        LOOP_TOL = 2.0
+
         if abs(z_split - 10.0) < 1.0:
+            # Part1.stp special case: inner/outer edge filtering at Z~10
             inner_edges = []
             outer_edges = []
             for edge in section_edges:
@@ -459,11 +614,11 @@ class DFMEngine:
                     inner_edges.append(edge)
                 elif r > 0.6 * max_r:
                     outer_edges.append(edge)
-            inner_loops = build_loops_for_edges(inner_edges, 0.4)
-            outer_loops = build_loops_for_edges(outer_edges, 0.01)
+            inner_loops = build_loops_for_edges(inner_edges, LOOP_TOL)
+            outer_loops = build_loops_for_edges(outer_edges, LOOP_TOL)
             loops = [l for l in (inner_loops + outer_loops) if l['is_closed']]
         else:
-            all_loops = build_loops_for_edges(section_edges, 0.4)
+            all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
             loops = [l for l in all_loops if l['is_closed']]
 
         

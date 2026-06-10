@@ -146,7 +146,7 @@ QLabel.val-text {
 class DFMMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DfM Intelligence Agent — Bosch")
+        self.setWindowTitle("DfM Intelligence Agent")
         self.resize(1200, 800)
         
         self.engine = None
@@ -178,7 +178,7 @@ class DFMMainWindow(QMainWindow):
         top_layout = QHBoxLayout(top_frame)
         top_layout.setContentsMargins(15, 10, 15, 10)
         
-        title_label = QLabel("DfM Intelligence Agent — Bosch")
+        title_label = QLabel("DfM Intelligence Agent")
         title_label.setObjectName("app_title")
         title_font = QFont("Segoe UI", 14, QFont.Bold)
         title_label.setFont(title_font)
@@ -1017,16 +1017,21 @@ class DFMMainWindow(QMainWindow):
             cavity_cut = cavity_box
             core_cut = core_box
             
+        if cavity_cut is None or cavity_cut.IsNull():
+            cavity_cut = cavity_box
+        if core_cut is None or core_cut.IsNull():
+            core_cut = core_box
+            
         # Retract slightly for visual spacing
         trans_z = dz * 0.4
         
         trsf_cavity = gp_Trsf()
         trsf_cavity.SetTranslation(gp_Vec(0, 0, trans_z))
-        cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True).Shape()
+        cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True, False).Shape()
         
         trsf_core = gp_Trsf()
         trsf_core.SetTranslation(gp_Vec(0, 0, -trans_z))
-        core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True).Shape()
+        core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True, False).Shape()
         
         cavity_color = Quantity_Color(0.9, 0.2, 0.2, Quantity_TOC_RGB)
         ais_cavity = self.display.DisplayColoredShape(cavity_exploded, cavity_color, update=False)
@@ -1292,15 +1297,20 @@ class DFMMainWindow(QMainWindow):
             cavity_cut = cavity_box
             core_cut = core_box
             
+        if cavity_cut is None or cavity_cut.IsNull():
+            cavity_cut = cavity_box
+        if core_cut is None or core_cut.IsNull():
+            core_cut = core_box
+            
         trans_z = dz * 0.4
         
         trsf_cavity = gp_Trsf()
         trsf_cavity.SetTranslation(gp_Vec(0, 0, trans_z))
-        cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True).Shape()
+        cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True, False).Shape()
         
         trsf_core = gp_Trsf()
         trsf_core.SetTranslation(gp_Vec(0, 0, -trans_z))
-        core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True).Shape()
+        core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True, False).Shape()
         
         cavity_color = Quantity_Color(0.9, 0.2, 0.2, Quantity_TOC_RGB)
         ais_cavity = self.display.DisplayColoredShape(cavity_exploded, cavity_color, update=False)
@@ -1566,13 +1576,18 @@ class DFMMainWindow(QMainWindow):
             cavity_cut = cavity_box
             core_cut = core_box
             
+        if cavity_cut is None or cavity_cut.IsNull():
+            cavity_cut = cavity_box
+        if core_cut is None or core_cut.IsNull():
+            core_cut = core_box
+            
         trsf_cavity = gp_Trsf()
         trsf_cavity.SetTranslation(trans_vec)
-        cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True).Shape()
+        cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True, False).Shape()
         
         trsf_core = gp_Trsf()
         trsf_core.SetTranslation(-trans_vec)
-        core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True).Shape()
+        core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True, False).Shape()
         
         if mode == "Parting Plane Analysis" or abs(d_vec[2]) > 0.9:
             margin = dx * 0.08
@@ -1688,7 +1703,7 @@ class DFMMainWindow(QMainWindow):
             # Combine: first rotate, then translate
             trsf_trans.Multiply(trsf)
             
-            transformed_arrow = BRepBuilderAPI_Transform(arrow, trsf_trans, True).Shape()
+            transformed_arrow = BRepBuilderAPI_Transform(arrow, trsf_trans, True, False).Shape()
             return transformed_arrow
         except Exception as e:
             print("Error creating arrow:", e)
