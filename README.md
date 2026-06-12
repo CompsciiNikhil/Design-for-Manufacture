@@ -1,397 +1,203 @@
-# DFM Agent: Automated Moldability Analysis from STEP Files
+# AI-Driven Design for Manufacturability Analysis Platform for Injection-Molded Automotive Plastic Components
 
-## Overview
+Automatically analyze STEP (.stp) CAD models to detect optimal mold opening direction, undercuts, draft angle violations, parting lines, and core/cavity classification — providing actionable manufacturability recommendations backed by computational geometry.
 
-DFM Agent is an automated Design for Manufacturing (DfM) analysis system for injection molded plastic components.
+## 🎯 Problem Statement
 
-The system ingests a CAD STEP file, extracts geometric and topological information, determines an optimal mold pull direction, performs manufacturability analysis, identifies undercuts, classifies core and cavity regions, detects potential parting lines, and visualizes the results in a 3D CAD viewer.
+Designing injection-molded plastic parts that are actually manufacturable requires deep expertise in mold design. Engineers must manually check:
+- Can the part be pulled out of the mold without getting stuck? (Undercuts)
+- Are the walls tapered enough for clean ejection? (Draft Angles)
+- Where should the mold split? (Parting Line)
+- Which mold half forms which surface? (Core vs. Cavity)
 
-The goal is to reduce manual moldability inspection effort and provide engineers with rapid manufacturability feedback during the design stage.
+This tool automates the entire analysis pipeline, turning hours of expert review into seconds of computation.
 
-\---
+## ✨ Features
 
-## Current Features
+| Feature | Status | Description |
+| :--- | :--- | :--- |
+| 📁 STEP File Parser | ✅ Done | Load and parse .stp/.step CAD files using OpenCascade |
+| 🔺 Geometry Tessellation | ✅ Done | Convert B-Rep to triangle meshes with per-face properties |
+| 🖥️ Interactive 3D Viewer | ✅ Done | Plotly-based WebGL viewer with zoom, pan, rotate |
+| 🎨 Surface Type Analysis | ✅ Done | Classify faces (Plane, Cylinder, Cone, Sphere, Torus, B-Spline) |
+| 📊 Model Statistics | ✅ Done | Face count, edge count, area, bounding box, distributions |
+| 🧭 Mold Direction Analysis | 🔲 Phase 3 | Generate and rank candidate pull directions |
+| 📏 Draft Angle Analysis | 🔲 Phase 4 | Calculate draft angles, color-coded heatmap |
+| 🔍 Undercut Detection | 🔲 Phase 5 | Ray-casting and normal analysis |
+| ✂️ Parting Line Generation | 🔲 Phase 7 | Graph-based continuous loop detection |
+| 🎨 Core/Cavity Classification | 🔲 Phase 8 | Surface classification relative to mold direction |
+| 🤖 DfM Recommendations | 🔲 Phase 9 | AI-generated engineering recommendations |
+| 📄 PDF Report Export | 🔲 Phase 10 | Complete DfM report generation |
 
-### STEP File Parsing
+## 🚀 Quick Start
 
-* Reads CAD geometry from STEP files
-* Extracts all faces from the model
-* Computes:
+### Prerequisites
+- Python 3.11+ installed on your system
+- pip package manager
 
-  * Surface type
-  * Surface area
-  * Centroid
-  * Face normal
+### Installation
 
-Example:
+```bash
+# 1. Clone the repository
+git clone https://github.com/nischala755/Bosch_DFDM.git
+cd Bosch_DFDM
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Generate sample STEP files for testing
+python tests/generate_test_part.py
+
+# 4. Launch the application
+streamlit run app.py
+```
+
+The app opens at `http://localhost:8501`
+
+### First Run
+- Upload `samples/test_bracket.stp` via the sidebar
+- Explore the interactive 3D model
+- Toggle between **Surface Type**, **Face ID**, and **Uniform** coloring
+- Enable wireframe edges and face normals
+- Review the face data table and surface type distribution
+
+### 🖱️ 3D Viewer Navigation Controls
+When interacting with the 3D model canvas:
+- **Rotate / Orbit**: Left-click and drag
+- **Pan / Translate**: Middle-click (scroll wheel click) and drag, OR hold `Shift` + Left-click and drag
+- **Zoom**: Scroll the mouse wheel, OR Right-click and drag
+
+## 🏗️ Architecture
 
 ```text
-Faces extracted: 311
+STEP File (.stp/.step)
+        │
+        ▼
+┌──────────────────┐
+│   STEPParser     │  Reads STEP file → OpenCascade TopoDS_Shape
+│   (step_parser)  │  Validates format, extracts topology counts
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ ShapeTessellator │  B-Rep → Triangle mesh (per-face)
+│   (tessellator)  │  Extracts vertices, triangles, normals, areas
+└────────┬─────────┘  Classifies surface types, computes centers
+         │
+         ▼
+┌──────────────────┐
+│ModelTessellation  │  Central data structure for ALL analyses
+│   (geometry.py)  │  Faces, edges, bounding box, statistics
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│  ModelViewer      │  Plotly Mesh3d + Scatter3d visualization
+│   (viewer.py)    │  Color modes, wireframe, normals, hover info
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│  Streamlit App   │  Professional dashboard with dark theme
+│    (app.py)      │  Upload, view, analyze, export
+└──────────────────┘
 ```
 
-\---
-
-### Geometric Feature Extraction
-
-For each face:
-
-```python
-FaceData(
-    face\\\\\\\_id,
-    surface\\\\\\\_type,
-    area,
-    centroid,
-    normal,
-    neighbors
-)
-```
-
-Extracted properties:
-
-* Face ID
-* Surface Type
-* Area
-* Centroid
-* Surface Normal
-* Neighbor Information
-
-\---
-
-### Topology Graph Generation
-
-Builds a face adjacency graph using OpenCascade topology information.
+## 📁 Project Structure
 
 ```text
-Face A
-    ↔
-Face B
-```
-
-Two faces are considered adjacent if they share a common CAD edge.
-
-Output:
-
-```python
-graph\\\\\\\[face\\\\\\\_id] = \\\\\\\[neighbor\\\\\\\_faces]
-```
-
-\---
-
-### Mold Direction Optimization
-
-A candidate search strategy evaluates multiple pull directions.
-
-Current implementation:
-
-* 500-direction search
-* Fibonacci sphere sampling
-* Area-weighted evaluation
-* Undercut penalty integration
-
-Output:
-
-```text
-Best Mold Direction
-Optimization Score
-```
-
-Current result:
-
-```text
-Direction: \\\\\\\[0, 0, 1]
-```
-
-\---
-
-### Draft Analysis
-
-Computes draft angle for every face relative to the selected mold pull direction.
-
-Output:
-
-* Minimum Draft Angle
-* Maximum Draft Angle
-* Average Draft Angle
-
-Current:
-
-```text
-Minimum Draft: -90°
-Maximum Draft: 90°
-Average Draft: -1.059°
-```
-
-\---
-
-### Undercut Detection
-
-Identifies faces opposing the mold pull direction.
-
-Outputs:
-
-* Undercut Face Count
-* Undercut Area
-
-Current:
-
-```text
-Undercut Faces: 148
-Undercut Area: 482.821
-```
-
-\---
-
-### Core / Cavity Classification
-
-Faces are classified based on their relationship to the mold pull direction.
-
-Classes:
-
-* CORE
-* CAVITY
-* NEUTRAL
-
-Current:
-
-```text
-Core Faces: 129
-Cavity Faces: 92
-Neutral Faces: 90
-```
-
-\---
-
-### Silhouette Detection
-
-Identifies faces approximately perpendicular to the mold pull direction.
-
-These faces often represent:
-
-* Mold split candidates
-* Parting regions
-* Vertical manufacturing boundaries
-
-Current:
-
-```text
-Silhouette Faces: 90
-Silhouette Area: 2090.537
-```
-
-\---
-
-### Parting Line Detection (Version 1)
-
-Topology-based detection.
-
-Logic:
-
-```text
-CORE Face
-touches
-CAVITY Face
-```
-
-Result:
-
-```text
-Boundary Pairs: 136
-```
-
-\---
-
-### Parting Line Detection (Version 2)
-
-Silhouette-based detection.
-
-Logic:
-
-```text
-Silhouette Face
-touches
-Non-Silhouette Face
-```
-
-Result:
-
-```text
-Boundary Pairs: 308
-```
-
-Version 2 better represents real mold split regions and manufacturing boundaries.
-
-\---
-
-### Shared CAD Edge Extraction
-
-Extracts actual OpenCascade edges corresponding to detected parting boundaries.
-
-Output:
-
-```text
-Shared CAD Edges
-```
-
-These edges are used for visualization and future continuous parting-line generation.
-
-\---
-
-### 3D Visualization
-
-Built using OpenCascade Viewer.
-
-Visualized entities:
-
-* CAD Model
-* Silhouette Faces
-* Parting Candidate Faces
-* Shared Parting Edges
-
-Current visualization:
-
-* Red = Silhouette Faces
-* Yellow = Parting Edges
-* Brown = Original CAD Geometry
-
-\---
-
-## Project Architecture
-
-```text
-STEP File
-    ↓
-STEP Parser
-    ↓
-Face Extraction
-    ↓
-Topology Graph
-    ↓
-Mold Direction Optimization
-    ↓
-Draft Analysis
-    ↓
-Undercut Detection
-    ↓
-Core/Cavity Classification
-    ↓
-Silhouette Detection
-    ↓
-Parting Line Detection
-    ↓
-Shared Edge Extraction
-    ↓
-3D Visualization
-```
-
-\---
-
-## Project Structure
-
-```text
-dfm\\\\\\\_agent/
+Bosch_DFDM/
 │
-├── main.py
+├── app.py                          # Streamlit dashboard (entry point)
+├── requirements.txt                # All dependencies (pip install)
+├── environment.yml                 # Conda alternative (optional)
+├── .gitignore
+├── README.md
 │
-├── models.py
+├── .streamlit/
+│   └── config.toml                 # Dark theme configuration
 │
-├── step\\\\\\\_parser.py
+├── src/                            # Core source code
+│   ├── __init__.py
+│   │
+│   ├── models/                     # Data structures
+│   │   ├── __init__.py
+│   │   └── geometry.py             # FaceTessellation, ModelTessellation, SurfaceType
+│   │
+│   ├── cad/                        # CAD parsing engine
+│   │   ├── __init__.py
+│   │   ├── step_parser.py          # STEP file reader (OpenCascade)
+│   │   └── tessellator.py          # B-Rep → triangle mesh conversion
+│   │
+│   └── visualization/              # 3D rendering
+│       ├── __init__.py
+│       └── viewer.py               # Plotly 3D viewer with multiple modes
 │
-├── topology.py
+├── tests/                          # Testing suite
+│   ├── __init__.py
+│   ├── generate_test_part.py       # Generate sample STEP files
+│   └── test_step_parser.py         # Unit tests (pytest)
 │
-├── mold\\\\\\\_direction.py
-│
-├── draft\\\\\\\_analysis.py
-│
-├── undercut\\\\\\\_detector.py
-│
-├── core\\\\\\\_cavity.py
-│
-├── silhouette\\\\\\\_detector.py
-│
-├── parting\\\\\\\_line.py
-│
-├── parting\\\\\\\_line\\\\\\\_v2.py
-│
-├── edge\\\\\\\_extractor.py
-│
-├── visualizer.py
-│
-└── Part1.stp
+└── samples/                        # Sample STEP files (generated)
+    └── README.md
 ```
 
-\---
+## 🔧 Technology Stack
 
-## Technologies Used
+| Technology | Version | Purpose |
+| :--- | :--- | :--- |
+| Python | 3.11+ | Core language |
+| CadQuery / OCP | 7.8.1 | OpenCascade Python bindings for STEP parsing & B-Rep analysis |
+| Streamlit | 1.30+ | Web dashboard framework |
+| Plotly | 5.18+ | Interactive 3D visualization (WebGL) |
+| NumPy | 1.24+ | Numerical computation for geometry |
+| SciPy | 1.11+ | Scientific computing (clustering, optimization) |
+| NetworkX | 3.0+ | Graph algorithms (parting line detection) |
+| pandas | 2.0+ | Structured data tables |
 
-### CAD Kernel
+*All dependencies are pip-installable. No conda required. No cloud APIs. Everything runs locally.*
 
-* OpenCascade
-* pythonOCC
+## 🧪 Testing
 
-### Numerical Computation
+```bash
+# Generate test STEP files first
+python tests/generate_test_part.py
 
-* NumPy
+# Run unit tests
+python -m pytest tests/ -v
 
-### Visualization
-
-* OpenCascade Viewer
-* PyVista (future support)
-
-### Language
-
-* Python 3.x
-
-\---
-
-## Current Results
-
-Test Model:
-
-```text
-Part1.stp
+# Run with coverage report
+python -m pytest tests/ -v --cov=src --cov-report=term-missing
 ```
 
-Results:
+### Test Part: `test_bracket.stp`
+A parametric bracket with 51 faces including:
+- 11 planar faces (flat walls, top, bottom)
+- 24 cylindrical faces (mounting holes)
+- 12 spherical faces (fillet blends)
+- 4 toroidal faces (rounded edges)
 
-```text
-Faces Extracted: 311
+## 🗺️ Development Roadmap
 
-Core Faces: 129
-Cavity Faces: 92
-Neutral Faces: 90
+| Phase | Module | What it Does | Status |
+| :--- | :--- | :--- | :--- |
+| 1 | STEP Viewer | Upload, parse, visualize STEP files | ✅ Complete |
+| 2 | Geometry Extraction | Extract face normals, areas, centers, types | ✅ Complete (built into Phase 1) |
+| 3 | Mold Direction | Generate candidate pull directions via PCA + clustering | 🔲 Next |
+| 4 | Draft Analysis | Calculate draft angles, color-coded heatmap | 🔲 Planned |
+| 5 | Undercut Detection | Normal analysis + ray casting for undercuts | 🔲 Planned |
+| 6 | Direction Optimization | Score and select optimal mold opening direction | 🔲 Planned |
+| 7 | Parting Line | Graph-based continuous loop generation | 🔲 Planned |
+| 8 | Core/Cavity | Classify surfaces into core and cavity | 🔲 Planned |
+| 9 | DfM Agent | AI-generated engineering recommendations | 🔲 Planned |
+| 10 | Final Dashboard | Complete UI + PDF export | 🔲 Planned |
 
-Silhouette Faces: 90
+## ⚠️ Troubleshooting
 
-Parting Line V1:
-136 Boundary Pairs
-
-Parting Line V2:
-308 Boundary Pairs
-
-Undercut Faces:
-148
-
-Mold Direction:
-\\\\\\\[0, 0, 1]
-```
-
-\---
-
-## Future Work
-
-### Short Term
-
-* Continuous parting-line generation
-* Mold direction visualization arrow
-* Core/Cavity color visualization
-* JSON report export
-* Automated DFM report generation
-
-### Long Term
-
-* AI-assisted DFM recommendations
-* Automatic tooling split generation
-* Multi-direction mold analysis
-* Web dashboard
-* Streamlit interface
-* Industrial-grade manufacturability scoring
+| Issue | Solution |
+| :--- | :--- |
+| `ModuleNotFoundError: No module named 'OCP'` | Run `pip install cadquery` — this installs OCP (OpenCascade bindings) |
+| `RuntimeError: OpenCascade failed to read STEP file` | Verify the file is a valid STEP format (not STL/IGES) |
+| Streamlit shows blank page | Ensure you run from project root: `streamlit run app.py` |
+| `UnicodeEncodeError` on Windows | Set console encoding: `chcp 65001` before running |
+| Large file slow to load | Adjust tessellation quality in `ShapeTessellator(linear_deflection=0.5)` |
