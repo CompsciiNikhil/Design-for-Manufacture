@@ -1,203 +1,196 @@
-# AI-Driven Design for Manufacturability Analysis Platform for Injection-Molded Automotive Plastic Components
+# DfM Intelligence Agent
+### Automated Design for Manufacturability Analysis Platform for Injection-Molded Plastic Components
 
-Automatically analyze STEP (.stp) CAD models to detect optimal mold opening direction, undercuts, draft angle violations, parting lines, and core/cavity classification — providing actionable manufacturability recommendations backed by computational geometry.
+An advanced engineering platform that automatically analyzes STEP (`.stp`/`.step`) CAD models to detect optimal mold opening directions, evaluate draft angle compliance, locate undercut faces, trace parting lines, and simulate core/cavity splits. Includes a standalone **PyQt5 OpenGL Desktop Application** and a **FastAPI backend + Streamlit Web Application**.
+
+---
 
 ## 🎯 Problem Statement
 
-Designing injection-molded plastic parts that are actually manufacturable requires deep expertise in mold design. Engineers must manually check:
-- Can the part be pulled out of the mold without getting stuck? (Undercuts)
-- Are the walls tapered enough for clean ejection? (Draft Angles)
-- Where should the mold split? (Parting Line)
-- Which mold half forms which surface? (Core vs. Cavity)
+Designing injection-molded plastic parts requires deep expertise in mold tooling design. Wall tapers and split configurations must be carefully aligned with mold-pull directions to prevent ejector locks or part damage. Manual compliance reviews are tedious and prone to oversight. 
 
-This tool automates the entire analysis pipeline, turning hours of expert review into seconds of computation.
+This platform automates the entire geometry analysis pipeline, turning hours of expert manual CAD review into seconds of local deterministic computations.
+
+---
 
 ## ✨ Features
 
 | Feature | Status | Description |
 | :--- | :--- | :--- |
-| 📁 STEP File Parser | ✅ Done | Load and parse .stp/.step CAD files using OpenCascade |
-| 🔺 Geometry Tessellation | ✅ Done | Convert B-Rep to triangle meshes with per-face properties |
-| 🖥️ Interactive 3D Viewer | ✅ Done | Plotly-based WebGL viewer with zoom, pan, rotate |
-| 🎨 Surface Type Analysis | ✅ Done | Classify faces (Plane, Cylinder, Cone, Sphere, Torus, B-Spline) |
-| 📊 Model Statistics | ✅ Done | Face count, edge count, area, bounding box, distributions |
-| 🧭 Mold Direction Analysis | 🔲 Phase 3 | Generate and rank candidate pull directions |
-| 📏 Draft Angle Analysis | 🔲 Phase 4 | Calculate draft angles, color-coded heatmap |
-| 🔍 Undercut Detection | 🔲 Phase 5 | Ray-casting and normal analysis |
-| ✂️ Parting Line Generation | 🔲 Phase 7 | Graph-based continuous loop detection |
-| 🎨 Core/Cavity Classification | 🔲 Phase 8 | Surface classification relative to mold direction |
-| 🤖 DfM Recommendations | 🔲 Phase 9 | AI-generated engineering recommendations |
-| 📄 PDF Report Export | 🔲 Phase 10 | Complete DfM report generation |
+| 📁 **STEP CAD Parser** | ✅ Done | Parses `.stp` / `.step` B-Rep files locally using OpenCascade bindings. |
+| 🔺 **Tessellation & Bounding Box** | ✅ Done | Converts B-Rep faces to triangular mesh surfaces and calculates exact physical bounding box dimensions. |
+| 🧭 **Mold Axis Optimization** | ✅ Done | Sweeps candidate pull directions across X, Y, and Z axes, scoring them based on undercut and draft conditions. |
+| 📏 **Draft Angle Heatmap** | ✅ Done | Computes face draft angles relative to the pull vector and highlights compliant, warning, and vertical faces. |
+| 🔍 **Undercut Detection** | ✅ Done | Detects undercut regions, calculates undercut surface areas, and flags necessary side actions. |
+| ✂️ **Parting Line Detection** | ✅ Done | Traces watertight parting loops at the optimal split height using topological edge connectivity. |
+| 🗜️ **Core & Cavity Boolean Split** | ✅ Done | Dynamically splits the part volume into discrete Core and Cavity blocks using solid Boolean cuts. |
+| ↕️ **Exploded Separation Slider** | ✅ Done | Provides a 3D animation slider to separate and review the core and cavity block halves in real time. |
+| 📄 **PDF & JSON Reports** | ✅ Done | Generates high-fidelity PDF engineering reports and exports raw metadata to JSON. |
+| 🖥️ **PyQt5 Standalone GUI** | ✅ Done | Dark-themed desktop engineering workstation with camera presets, progress dialogs, and coordinate triedrons. |
+| 🌐 **FastAPI & Streamlit Web App** | ✅ Done | Client-server web app allowing remote uploads, Plotly-based WebGL rendering, and parameterized analysis sweeps. |
+
+---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.11+ installed on your system
-- pip package manager
+* Python 3.9 - 3.11
+* A python environment with `pythonocc-core` installed (conda-forge is recommended).
 
-### Installation
-
+### Environment Setup
+Create a conda environment and install the required dependencies:
 ```bash
-# 1. Clone the repository
-git clone https://github.com/nischala755/Bosch_DFDM.git
-cd Bosch_DFDM
+# 1. Create environment and install packages
+conda create -n dfm -c conda-forge python=3.10 pythonocc-core pyqt pyqt5 fastapi uvicorn streamlit plotly pandas requests reportlab numpy -y
 
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Generate sample STEP files for testing
-python tests/generate_test_part.py
-
-# 4. Launch the application
-streamlit run app.py
+# 2. Activate environment
+conda activate dfm
 ```
 
-The app opens at `http://localhost:8501`
+---
 
-### First Run
-- Upload `samples/test_bracket.stp` via the sidebar
-- Explore the interactive 3D model
-- Toggle between **Surface Type**, **Face ID**, and **Uniform** coloring
-- Enable wireframe edges and face normals
-- Review the face data table and surface type distribution
+### Running the Applications
 
-### 🖱️ 3D Viewer Navigation Controls
-When interacting with the 3D model canvas:
-- **Rotate / Orbit**: Left-click and drag
-- **Pan / Translate**: Middle-click (scroll wheel click) and drag, OR hold `Shift` + Left-click and drag
-- **Zoom**: Scroll the mouse wheel, OR Right-click and drag
+#### Option A: Standalone PyQt5 Desktop App (Recommended)
+Launch the dark-themed desktop CAD analysis platform directly:
+```bash
+python dfm_gui.py
+```
+*Features drag-and-drop loading, built-in sample loaders, viewport camera presets, and real-time computation status logs.*
+
+#### Option B: FastAPI Backend + Streamlit Web App
+To run the web version of the application:
+1. Start the **FastAPI REST Server** in your terminal:
+   ```bash
+   python -m uvicorn main_web:app --host 127.0.0.1 --port 8000
+   ```
+2. Start the **Streamlit Web Dashboard** in a second terminal:
+   ```bash
+   streamlit run app.py
+   ```
+3. Open your browser and navigate to `http://localhost:8501`.
+
+---
+
+## 🖱️ 3D Viewer Navigation Controls
+
+### PyQt5 OpenGL Desktop Viewport
+* **Rotate / Orbit**: Hold **Left-Click** and drag.
+* **Pan / Translate**: Hold **Middle-Click** (scroll wheel button) and drag, OR hold **Shift + Left-Click** and drag.
+* **Zoom**: Scroll the **Mouse Wheel**, OR hold **Right-Click** and drag.
+* **Fit View / Reset**: Click **Fit View** in the viewport presets toolbar.
+
+### Streamlit Plotly Web Viewer
+* **Rotate / Orbit**: Hold **Left-Click** and drag.
+* **Pan / Translate**: Hold **Shift + Left-Click** and drag.
+* **Zoom**: Scroll the **Mouse Wheel**, OR pinch/zoom on touch pads.
+
+---
 
 ## 🏗️ Architecture
 
 ```text
 STEP File (.stp/.step)
-        │
-        ▼
-┌──────────────────┐
-│   STEPParser     │  Reads STEP file → OpenCascade TopoDS_Shape
-│   (step_parser)  │  Validates format, extracts topology counts
-└────────┬─────────┘
          │
          ▼
-┌──────────────────┐
-│ ShapeTessellator │  B-Rep → Triangle mesh (per-face)
-│   (tessellator)  │  Extracts vertices, triangles, normals, areas
-└────────┬─────────┘  Classifies surface types, computes centers
-         │
-         ▼
-┌──────────────────┐
-│ModelTessellation  │  Central data structure for ALL analyses
-│   (geometry.py)  │  Faces, edges, bounding box, statistics
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  ModelViewer      │  Plotly Mesh3d + Scatter3d visualization
-│   (viewer.py)    │  Color modes, wireframe, normals, hover info
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  Streamlit App   │  Professional dashboard with dark theme
-│    (app.py)      │  Upload, view, analyze, export
-└──────────────────┘
+┌──────────────────────────────────────────────┐
+│        DFMEngine (dfm_engine.py)             │
+│  - OpenCascade-powered STEP file parser      │
+│  - B-Rep face tessellation & normal analysis │
+│  - Pull direction ranking & draft metrics    │
+│  - Parting line loop & core/cavity cuts      │
+└──────┬────────────────────────────────┬──────┘
+       │                                │
+       ▼ (Direct Import)                ▼ (JSON / REST API)
+┌──────────────────────────┐    ┌──────────────────────────────────┐
+│ Standalone Desktop GUI   │    │      FastAPI App (main_web.py)   │
+│      (dfm_gui.py)        │    │  Exposes REST endpoints for mesh │
+│  - PyQt5-based GUI       │    │  data & parting line algorithms  │
+│  - OCC OpenGL Viewport   │    └────────────────┬─────────────────┘
+│  - Direct camera presets │                     │
+│  - Exploded split slider │                     ▼ (HTTP Requests)
+└──────────────────────────┘    ┌──────────────────────────────────┐
+                                │      Streamlit Web Dashboard     │
+                                │            (app.py)              │
+                                │  - Client dashboard UI           │
+                                │  - WebGL Plotly 3D Viewer        │
+                                │  - Separation slider & settings  │
+                                └──────────────────────────────────┘
 ```
+
+---
 
 ## 📁 Project Structure
 
 ```text
-Bosch_DFDM/
+Design-for-Manufacture/
 │
-├── app.py                          # Streamlit dashboard (entry point)
-├── requirements.txt                # All dependencies (pip install)
-├── environment.yml                 # Conda alternative (optional)
-├── .gitignore
-├── README.md
+├── dfm_engine.py             # Core geometry, undercut, parting line & split algorithms
+├── dfm_gui.py                # Standalone PyQt5 desktop application entry point
+├── main_web.py               # FastAPI backend exposing REST endpoints
+├── app.py                    # Streamlit web frontend client application
+├── report_generator.py       # Exporter for PDF engineering reports & JSON datasets
+├── requirements.txt          # Python pip dependencies list
 │
-├── .streamlit/
-│   └── config.toml                 # Dark theme configuration
+├── examples/                 # Built-in sample STEP files for testing
+│   ├── Part1.stp             # Complex injection-molded automotive part
+│   ├── cube.stp              # Basic test cube
+│   ├── cylinder.stp          # Cylindrical test part
+│   └── bracket.stp           # Bracket test part
 │
-├── src/                            # Core source code
-│   ├── __init__.py
-│   │
-│   ├── models/                     # Data structures
-│   │   ├── __init__.py
-│   │   └── geometry.py             # FaceTessellation, ModelTessellation, SurfaceType
-│   │
-│   ├── cad/                        # CAD parsing engine
-│   │   ├── __init__.py
-│   │   ├── step_parser.py          # STEP file reader (OpenCascade)
-│   │   └── tessellator.py          # B-Rep → triangle mesh conversion
-│   │
-│   └── visualization/              # 3D rendering
-│       ├── __init__.py
-│       └── viewer.py               # Plotly 3D viewer with multiple modes
-│
-├── tests/                          # Testing suite
-│   ├── __init__.py
-│   ├── generate_test_part.py       # Generate sample STEP files
-│   └── test_step_parser.py         # Unit tests (pytest)
-│
-└── samples/                        # Sample STEP files (generated)
-    └── README.md
+└── tests/                    # Computational & GUI test suite
+    ├── generate_test_shapes.py # Script to output example geometries
+    ├── test_axis_opening_opt.py# Verifies pull axis scoring calculations
+    ├── test_flow_sensor.py    # Tests parting line extraction and Boolean splits
+    ├── test_gui_init.py       # GUI lifecycle, setup, and tab-switching checks
+    └── test_optimal_parting.py# Validates parting plane height sweep searches
 ```
+
+---
 
 ## 🔧 Technology Stack
 
 | Technology | Version | Purpose |
 | :--- | :--- | :--- |
-| Python | 3.11+ | Core language |
-| CadQuery / OCP | 7.8.1 | OpenCascade Python bindings for STEP parsing & B-Rep analysis |
-| Streamlit | 1.30+ | Web dashboard framework |
-| Plotly | 5.18+ | Interactive 3D visualization (WebGL) |
-| NumPy | 1.24+ | Numerical computation for geometry |
-| SciPy | 1.11+ | Scientific computing (clustering, optimization) |
-| NetworkX | 3.0+ | Graph algorithms (parting line detection) |
-| pandas | 2.0+ | Structured data tables |
+| **Python** | 3.9 - 3.11 | Core development language |
+| **pythonocc-core** | 7.7.0+ | OpenCascade Python bindings for CAD B-Rep parsing & solid operations |
+| **PyQt5** | 5.15+ | Standing window desktop widgets and viewport layout management |
+| **FastAPI / Uvicorn** | 0.95+ | Backend REST framework powering the Streamlit web client |
+| **Streamlit** | 1.25+ | Client-side web dashboard interface |
+| **Plotly** | 5.15+ | WebGL mesh renderer for the browser client |
+| **ReportLab** | 4.0+ | Generates structural high-fidelity PDF engineering reports |
+| **NumPy** | 1.22+ | Multidimensional vector arithmetic for spatial points and mesh faces |
 
-*All dependencies are pip-installable. No conda required. No cloud APIs. Everything runs locally.*
+---
 
 ## 🧪 Testing
 
+The testing suite contains unit and integration tests covering calculations and layout lifecycles.
+
 ```bash
-# Generate test STEP files first
-python tests/generate_test_part.py
+# 1. Generate testing shapes
+python tests/generate_test_shapes.py
 
-# Run unit tests
-python -m pytest tests/ -v
+# 2. Run core parting line and Boolean splits tests
+python tests/test_flow_sensor.py
 
-# Run with coverage report
-python -m pytest tests/ -v --cov=src --cov-report=term-missing
+# 3. Run axis opening direction optimization checks
+python tests/test_axis_opening_opt.py
+
+# 4. Run parting plane height optimization sweeps
+python tests/test_optimal_parting.py
+
+# 5. Run GUI startup & tab lifecycle integration test
+python tests/test_gui_init.py
 ```
 
-### Test Part: `test_bracket.stp`
-A parametric bracket with 51 faces including:
-- 11 planar faces (flat walls, top, bottom)
-- 24 cylindrical faces (mounting holes)
-- 12 spherical faces (fillet blends)
-- 4 toroidal faces (rounded edges)
-
-## 🗺️ Development Roadmap
-
-| Phase | Module | What it Does | Status |
-| :--- | :--- | :--- | :--- |
-| 1 | STEP Viewer | Upload, parse, visualize STEP files | ✅ Complete |
-| 2 | Geometry Extraction | Extract face normals, areas, centers, types | ✅ Complete (built into Phase 1) |
-| 3 | Mold Direction | Generate candidate pull directions via PCA + clustering | 🔲 Next |
-| 4 | Draft Analysis | Calculate draft angles, color-coded heatmap | 🔲 Planned |
-| 5 | Undercut Detection | Normal analysis + ray casting for undercuts | 🔲 Planned |
-| 6 | Direction Optimization | Score and select optimal mold opening direction | 🔲 Planned |
-| 7 | Parting Line | Graph-based continuous loop generation | 🔲 Planned |
-| 8 | Core/Cavity | Classify surfaces into core and cavity | 🔲 Planned |
-| 9 | DfM Agent | AI-generated engineering recommendations | 🔲 Planned |
-| 10 | Final Dashboard | Complete UI + PDF export | 🔲 Planned |
+---
 
 ## ⚠️ Troubleshooting
 
 | Issue | Solution |
 | :--- | :--- |
-| `ModuleNotFoundError: No module named 'OCP'` | Run `pip install cadquery` — this installs OCP (OpenCascade bindings) |
-| `RuntimeError: OpenCascade failed to read STEP file` | Verify the file is a valid STEP format (not STL/IGES) |
-| Streamlit shows blank page | Ensure you run from project root: `streamlit run app.py` |
-| `UnicodeEncodeError` on Windows | Set console encoding: `chcp 65001` before running |
-| Large file slow to load | Adjust tessellation quality in `ShapeTessellator(linear_deflection=0.5)` |
+| `ImportError: DLL load failed...` | Ensure your Conda environment is active (`conda activate dfm`). PythonOCC relies on native C++ DLL paths loaded during conda environment activation. |
+| Viewport is blank / coordinates in bottom-left | Ensure you run the latest version of `dfm_gui.py` where canvas parenting is locked to the layout container rather than the top-level window. |
+| `ModuleNotFoundError: No module named 'OCC'` | Install OpenCascade conda-forge package: `conda install -c conda-forge pythonocc-core` |
+| Plotly viewer displays blank in Streamlit | Ensure the FastAPI server is running on `127.0.0.1:8000` before triggering the analysis on the sidebar. |
