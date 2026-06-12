@@ -196,7 +196,7 @@ class WelcomeWidget(QWidget):
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
         
-        subtitle = QLabel("Automated Moldability Analysis for Bosch Engineering")
+        subtitle = QLabel("Automated Moldability Analysis")
         subtitle.setStyleSheet("font-size: 14px; color: #a0a0c0; font-style: italic;")
         subtitle.setAlignment(Qt.AlignCenter)
         layout.addWidget(subtitle)
@@ -305,7 +305,7 @@ class WelcomeWidget(QWidget):
 class DFMProgressDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
-        self.setWindowTitle("Bosch DfM Intelligence Agent")
+        self.setWindowTitle("DfM Intelligence Agent")
         self.setFixedSize(400, 420)
         self.setStyleSheet("""
             QDialog { background-color: #1a1c2a; border: 1px solid #3d3d5c; border-radius: 8px; }
