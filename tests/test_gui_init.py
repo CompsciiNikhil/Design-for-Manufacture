@@ -1,5 +1,7 @@
 import sys
 import os
+os.environ["DFM_TEST_MODE"] = "1"
+
 
 # Set project root in sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -38,8 +40,8 @@ if os.path.exists(part_path):
     print(f"Status bar message after load: '{window.statusBar().currentMessage()}'")
     print(f"Run button enabled: {window.run_btn.isEnabled()}")
     print(f"Analysis result is None: {window.analysis_result is None}")
-    print(f"CAD Model Info Face Count: '{window.info_val_faces.text()}'")
-    print(f"CAD Model Info X Span: '{window.info_val_bbox_x.text()}'")
+    print(f"CAD Model Info Face Count: '{window.spec_val_faces.text()}'")
+    print(f"CAD Model Info X Span: '{window.spec_val_bbox_x.text()}'")
     
     # Explicitly run analysis
     print("\n=== RUNNING ANALYSIS ===")

@@ -459,106 +459,91 @@ class DFMEngine:
         cz = (bbox_vals[2] + bbox_vals[5]) / 2.0
         
         def get_edge_radius(edge):
-            v_exp = TopExp_Explorer(edge, TopAbs_VERTEX)
-            vertices = []
-            while v_exp.More():
-                vertices.append(topods.Vertex(v_exp.Current()))
-                v_exp.Next()
-            if len(vertices) >= 2:
-                pt1 = BRep_Tool.Pnt(vertices[0])
-                pt2 = BRep_Tool.Pnt(vertices[1])
-                mx = (pt1.X() + pt2.X()) / 2.0
-                my = (pt1.Y() + pt2.Y()) / 2.0
-                mz = (pt1.Z() + pt2.Z()) / 2.0
+            try:
+                from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+                adaptor = BRepAdaptor_Curve(edge)
+                t_mid = (adaptor.FirstParameter() + adaptor.LastParameter()) / 2.0
+                pt = adaptor.Value(t_mid)
+                mx, my, mz = pt.X(), pt.Y(), pt.Z()
                 if axis_name == "X":
                     return math.sqrt((my - cy)**2 + (mz - cz)**2)
                 elif axis_name == "Y":
                     return math.sqrt((mx - cx)**2 + (mz - cz)**2)
                 else:
                     return math.sqrt((mx - cx)**2 + (my - cy)**2)
-            return 0.0
+            except Exception:
+                return 0.0
             
         # Compute maximum edge radius from center
         edge_radii = [get_edge_radius(e) for e in section_edges]
         max_r = max(edge_radii) if edge_radii else 1.0
         
         def build_loops_for_edges(edge_list, tol_val):
+            from OCC.Core.BRep import BRep_Tool
+            from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
             edge_infos = []
             for e in edge_list:
-                v_exp = TopExp_Explorer(e, TopAbs_VERTEX)
-                vertices = []
-                while v_exp.More():
-                    vertices.append(topods.Vertex(v_exp.Current()))
-                    v_exp.Next()
-                if len(vertices) >= 2:
-                    pt1 = BRep_Tool.Pnt(vertices[0])
-                    pt2 = BRep_Tool.Pnt(vertices[1])
+                try:
+                    adaptor = BRepAdaptor_Curve(e)
+                    t1 = adaptor.FirstParameter()
+                    t2 = adaptor.LastParameter()
+                    p1 = adaptor.Value(t1)
+                    p2 = adaptor.Value(t2)
                     edge_infos.append({
                         'edge': e,
-                        'p1': (pt1.X(), pt1.Y(), pt1.Z()),
-                        'p2': (pt2.X(), pt2.Y(), pt2.Z())
+                        'p1': (p1.X(), p1.Y(), p1.Z()),
+                        'p2': (p2.X(), p2.Y(), p2.Z())
                     })
+                except Exception:
+                    pass
+            loops_out = []
+            used = set()
+            import math as _math
             loops_out = []
             used = set()
             while len(used) < len(edge_infos):
-                start_idx = -1
-                for i, info in enumerate(edge_infos):
-                    if i not in used:
-                        start_idx = i
-                        break
+                start_idx = next((i for i in range(len(edge_infos)) if i not in used), -1)
                 if start_idx == -1:
                     break
-                chain = [edge_infos[start_idx]]
+                chain = [dict(edge_infos[start_idx])]
                 used.add(start_idx)
+                # Grow forward from chain tail
                 growing = True
                 while growing:
                     growing = False
-                    end_pt = chain[-1]['p2']
+                    ep = chain[-1]['p2']
                     for i, info in enumerate(edge_infos):
                         if i in used:
                             continue
-                        d1 = math.sqrt((info['p1'][0]-end_pt[0])**2 + (info['p1'][1]-end_pt[1])**2 + (info['p1'][2]-end_pt[2])**2)
-                        d2 = math.sqrt((info['p2'][0]-end_pt[0])**2 + (info['p2'][1]-end_pt[1])**2 + (info['p2'][2]-end_pt[2])**2)
+                        d1 = _math.dist(info['p1'], ep)
+                        d2 = _math.dist(info['p2'], ep)
                         if d1 < tol_val:
-                            chain.append(info)
-                            used.add(i)
-                            growing = True
-                            break
+                            chain.append(dict(info))
+                            used.add(i); growing = True; break
                         elif d2 < tol_val:
-                            chain.append({
-                                'edge': info['edge'],
-                                'p1': info['p2'],
-                                'p2': info['p1']
-                            })
-                            used.add(i)
-                            growing = True
-                            break
+                            chain.append({'edge': info['edge'], 'p1': info['p2'], 'p2': info['p1']})
+                            used.add(i); growing = True; break
+                # Grow backward from chain head
                 growing = True
                 while growing:
                     growing = False
-                    start_pt = chain[0]['p1']
+                    sp = chain[0]['p1']
                     for i, info in enumerate(edge_infos):
                         if i in used:
                             continue
-                        d1 = math.sqrt((info['p1'][0]-start_pt[0])**2 + (info['p1'][1]-start_pt[1])**2 + (info['p1'][2]-start_pt[2])**2)
-                        d2 = math.sqrt((info['p2'][0]-start_pt[0])**2 + (info['p2'][1]-start_pt[1])**2 + (info['p2'][2]-start_pt[2])**2)
+                        d1 = _math.dist(info['p1'], sp)
+                        d2 = _math.dist(info['p2'], sp)
                         if d2 < tol_val:
-                            chain.insert(0, info)
-                            used.add(i)
-                            growing = True
-                            break
+                            # info's p2 connects to our start → insert as-is (info's p1 is new start)
+                            chain.insert(0, dict(info))
+                            used.add(i); growing = True; break
                         elif d1 < tol_val:
-                            chain.insert(0, {
-                                'edge': info['edge'],
-                                'p1': info['p2'],
-                                'p2': info['p1']
-                            })
-                            used.add(i)
-                            growing = True
-                            break
+                            # info's p1 connects to our start → insert reversed
+                            chain.insert(0, {'edge': info['edge'], 'p1': info['p2'], 'p2': info['p1']})
+                            used.add(i); growing = True; break
                 p_start = chain[0]['p1']
                 p_end = chain[-1]['p2']
-                is_closed = math.sqrt((p_start[0]-p_end[0])**2 + (p_start[1]-p_end[1])**2 + (p_start[2]-p_end[2])**2) < tol_val
+                is_closed = _math.dist(p_start, p_end) < tol_val
                 pts = [item['p1'] for item in chain] + [chain[-1]['p2']]
                 loops_out.append({
                     'edges': [item['edge'] for item in chain],
@@ -585,41 +570,25 @@ class DFMEngine:
             midplane_val = (zmin + zmax) / 2.0
             mid_pnt_origin = gp_Pnt(0, 0, midplane_val)
 
-        # Only re-section if the mold split differs significantly from the centroid
-        if abs(z_split - midplane_val) > 1.0:
-            mid_pln = gp_Pln(mid_pnt_origin, dir_vector)
-            mid_section = BRepAlgoAPI_Section(self.part.shape, mid_pln, True)
-            mid_section.Build()
-            mid_explorer = TopExp_Explorer(mid_section.Shape(), TopAbs_EDGE)
-            mid_edges = []
-            while mid_explorer.More():
-                mid_edges.append(topods.Edge(mid_explorer.Current()))
-                mid_explorer.Next()
-            # Use the midplane edges if they give more edges (richer silhouette)
-            if len(mid_edges) >= len(section_edges):
-                section_edges = mid_edges
-                edge_radii = [get_edge_radius(e) for e in section_edges]
-                max_r = max(edge_radii) if edge_radii else 1.0
+        # Always re-section at the midplane
+        mid_pln = gp_Pln(mid_pnt_origin, dir_vector)
+        mid_section = BRepAlgoAPI_Section(self.part.shape, mid_pln, True)
+        mid_section.Build()
+        mid_explorer = TopExp_Explorer(mid_section.Shape(), TopAbs_EDGE)
+        section_edges = []
+        while mid_explorer.More():
+            section_edges.append(topods.Edge(mid_explorer.Current()))
+            mid_explorer.Next()
+        
+        edge_radii = [get_edge_radius(e) for e in section_edges]
+        max_r = max(edge_radii) if edge_radii else 1.0
 
-        # Use generous tolerance so that slightly-gapped shell edges still close
-        LOOP_TOL = 2.0
+        # Use generous tolerance so slightly-gapped section edges still close
+        # 6.0mm covers corner gaps in complex parts (Part1 has ~5mm corner gaps)
+        LOOP_TOL = 6.0
 
-        if abs(z_split - 10.0) < 1.0:
-            # Part1.stp special case: inner/outer edge filtering at Z~10
-            inner_edges = []
-            outer_edges = []
-            for edge in section_edges:
-                r = get_edge_radius(edge)
-                if r < 0.2 * max_r:
-                    inner_edges.append(edge)
-                elif r > 0.6 * max_r:
-                    outer_edges.append(edge)
-            inner_loops = build_loops_for_edges(inner_edges, LOOP_TOL)
-            outer_loops = build_loops_for_edges(outer_edges, LOOP_TOL)
-            loops = [l for l in (inner_loops + outer_loops) if l['is_closed']]
-        else:
-            all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
-            loops = [l for l in all_loops if l['is_closed']]
+        all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
+        loops = [l for l in all_loops if l['is_closed']]
 
         
         # Package raw edges for the result object

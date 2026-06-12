@@ -10,7 +10,9 @@ OCC.Display.backend.load_backend('pyqt5')
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QComboBox, QLabel, 
                              QStatusBar, QFileDialog, QTabWidget, QFrame, 
-                             QSplitter, QMessageBox)
+                             QSplitter, QMessageBox, QSlider, QScrollArea,
+                             QStackedWidget, QGroupBox, QDialog, QProgressBar,
+                             QToolButton, QGridLayout)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
@@ -45,7 +47,7 @@ from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.TopoDS import topods
 
 # Import our customized modules
-from dfm_engine import DFMEngine
+from dfm_engine import DFMEngine, MATERIAL_THRESHOLDS
 
 STYLE_SHEET = """
 QMainWindow {
@@ -69,6 +71,15 @@ QFrame.panel {
     border: 1px solid #3d3d5c;
     border-radius: 6px;
     padding: 10px;
+}
+QFrame#dropzone {
+    border: 2px dashed #585b70;
+    border-radius: 8px;
+    background-color: #181825;
+}
+QFrame#dropzone:hover {
+    border-color: #e20015;
+    background-color: #252538;
 }
 QPushButton {
     background-color: #e20015;
@@ -141,7 +152,258 @@ QLabel.val-text {
     font-weight: bold;
     color: #ffffff;
 }
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+QScrollBar:vertical {
+    background-color: #181825;
+    width: 8px;
+    margin: 0px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background-color: #3d3d5c;
+    min-height: 20px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover {
+    background-color: #e20015;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+    border: none;
+}
 """
+
+class WelcomeWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setAcceptDrops(True)
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(50, 50, 50, 50)
+        layout.setSpacing(20)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        title_label = QLabel("📥 DfM Intelligence Agent")
+        title_label.setObjectName("welcome_title")
+        title_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #e20015;")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        subtitle = QLabel("Automated Moldability Analysis for Bosch Engineering")
+        subtitle.setStyleSheet("font-size: 14px; color: #a0a0c0; font-style: italic;")
+        subtitle.setAlignment(Qt.AlignCenter)
+        layout.addWidget(subtitle)
+        
+        self.dropzone = QFrame()
+        self.dropzone.setObjectName("dropzone")
+        self.dropzone.setFrameStyle(QFrame.StyledPanel)
+        
+        dropzone_layout = QVBoxLayout(self.dropzone)
+        dropzone_layout.setContentsMargins(30, 40, 30, 40)
+        dropzone_layout.setSpacing(15)
+        dropzone_layout.setAlignment(Qt.AlignCenter)
+        
+        drop_icon = QLabel("📂")
+        drop_icon.setStyleSheet("font-size: 48px;")
+        drop_icon.setAlignment(Qt.AlignCenter)
+        dropzone_layout.addWidget(drop_icon)
+        
+        drop_lbl = QLabel("Drag & Drop STEP (.stp / .step) file here")
+        drop_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff;")
+        drop_lbl.setAlignment(Qt.AlignCenter)
+        dropzone_layout.addWidget(drop_lbl)
+        
+        or_lbl = QLabel("— OR —")
+        or_lbl.setStyleSheet("font-size: 12px; color: #7f7f8f;")
+        or_lbl.setAlignment(Qt.AlignCenter)
+        dropzone_layout.addWidget(or_lbl)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(15)
+        btn_layout.setAlignment(Qt.AlignCenter)
+        
+        self.select_btn = QPushButton("Select STEP File")
+        self.select_btn.setStyleSheet("padding: 10px 20px; font-size: 13px;")
+        self.select_btn.clicked.connect(self.on_select_file)
+        
+        self.sample_btn = QPushButton("Load Sample Part")
+        self.sample_btn.setStyleSheet("background-color: #252538; border: 1px solid #e20015; padding: 10px 20px; font-size: 13px;")
+        self.sample_btn.clicked.connect(self.on_load_sample)
+        
+        btn_layout.addWidget(self.select_btn)
+        btn_layout.addWidget(self.sample_btn)
+        dropzone_layout.addLayout(btn_layout)
+        
+        layout.addWidget(self.dropzone)
+        
+        info_lbl = QLabel("Supported formats: STEP AP203 / AP214 / AP242 (.stp, .step)")
+        info_lbl.setStyleSheet("font-size: 11px; color: #7f7f8f;")
+        info_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info_lbl)
+        
+        features_frame = QFrame()
+        features_frame.setStyleSheet("background-color: #181825; border: 1px solid #3d3d5c; border-radius: 6px; padding: 15px;")
+        feat_layout = QHBoxLayout(features_frame)
+        feat_layout.setSpacing(20)
+        
+        def add_feature_card(title, desc):
+            w = QWidget()
+            l = QVBoxLayout(w)
+            l.setContentsMargins(0, 0, 0, 0)
+            l.setSpacing(5)
+            t = QLabel(title)
+            t.setStyleSheet("font-weight: bold; color: #e20015; font-size: 13px;")
+            d = QLabel(desc)
+            d.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+            d.setWordWrap(True)
+            l.addWidget(t)
+            l.addWidget(d)
+            feat_layout.addWidget(w)
+            
+        add_feature_card("📐 Geometry & Draft", "Scans face orientations to detect undercut sections and draft violations.")
+        add_feature_card("⚙️ Direction Optimization", "Evaluates 500 candidate directions to select the best mold pull axis.")
+        add_feature_card("🔗 Parting Line Loops", "Generates watertight splitting curves and projects them onto standard blocks.")
+        add_feature_card("📦 Core & Cavity Splitting", "Separates core and cavity blocks with animations along the optimized pull vector.")
+        
+        layout.addWidget(features_frame)
+        
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if any(url.toLocalFile().lower().endswith(('.stp', '.step')) for url in urls):
+                event.acceptProposedAction()
+                self.dropzone.setStyleSheet("border-color: #e20015; background-color: #212135;")
+                
+    def dragLeaveEvent(self, event):
+        self.dropzone.setStyleSheet("")
+        
+    def dropEvent(self, event):
+        self.dropzone.setStyleSheet("")
+        for url in event.mimeData().urls():
+            file_path = url.toLocalFile()
+            if file_path.lower().endswith(('.stp', '.step')):
+                self.parent_window.load_file(file_path)
+                break
+                
+    def on_select_file(self):
+        self.parent_window.on_open_file()
+        
+    def on_load_sample(self):
+        sample_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples", "Part1.stp")
+        if os.path.exists(sample_path):
+            self.parent_window.load_file(sample_path)
+        else:
+            QMessageBox.warning(self, "Warning", f"Sample part file not found at:\n{sample_path}")
+
+class DFMProgressDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        self.setWindowTitle("Bosch DfM Intelligence Agent")
+        self.setFixedSize(400, 420)
+        self.setStyleSheet("""
+            QDialog { background-color: #1a1c2a; border: 1px solid #3d3d5c; border-radius: 8px; }
+            QLabel { color: #f8f8f2; }
+            QLabel#title { font-size: 15px; font-weight: bold; color: #e20015; }
+            QLabel#phase { color: #bd93f9; font-style: italic; }
+            QProgressBar { background-color: #181825; border: 1px solid #3d3d5c; border-radius: 4px; text-align: center; color: white; }
+            QProgressBar::chunk { background-color: #e20015; border-radius: 3px; }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        title_lbl = QLabel("Manufacturing Analysis in Progress")
+        title_lbl.setObjectName("title")
+        title_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_lbl)
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(22)
+        layout.addWidget(self.progress_bar)
+        
+        self.phase_lbl = QLabel("Initializing calculations...")
+        self.phase_lbl.setObjectName("phase")
+        self.phase_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.phase_lbl)
+        
+        stages_box = QGroupBox("Analysis Pipeline Stages")
+        stages_box.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3d3d5c; border-radius: 6px; margin-top: 15px; padding-top: 15px; color: #e20015; }")
+        stages_layout = QVBoxLayout(stages_box)
+        stages_layout.setContentsMargins(15, 10, 15, 10)
+        stages_layout.setSpacing(6)
+        
+        self.stages = [
+            "STEP File Loaded",
+            "Geometry Parsed",
+            "Topology Extracted",
+            "Mold Direction Optimized",
+            "Draft Analysis Complete",
+            "Undercut Detection Complete",
+            "Parting Plane Optimized",
+            "Mold Split Generated",
+            "Report Ready"
+        ]
+        self.stage_labels = []
+        for stage in self.stages:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            
+            icon = QLabel("⚪")
+            icon.setFixedWidth(20)
+            lbl = QLabel(stage)
+            lbl.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+            
+            row_layout.addWidget(icon)
+            row_layout.addWidget(lbl)
+            row_layout.addStretch()
+            stages_layout.addWidget(row)
+            
+            self.stage_labels.append((icon, lbl))
+            
+        layout.addWidget(stages_box)
+        
+        self.close_btn = QPushButton("Open Results")
+        self.close_btn.setStyleSheet("padding: 8px;")
+        self.close_btn.setEnabled(False)
+        self.close_btn.clicked.connect(self.accept)
+        layout.addWidget(self.close_btn)
+        
+    def update_progress(self, percent, phase_text, completed_stages_count):
+        self.progress_bar.setValue(percent)
+        self.phase_lbl.setText(phase_text)
+        
+        for i in range(len(self.stages)):
+            icon, lbl = self.stage_labels[i]
+            if i < completed_stages_count:
+                icon.setText("🟢")
+                lbl.setStyleSheet("color: #28a745; font-weight: bold; font-size: 11px;")
+            elif i == completed_stages_count:
+                icon.setText("▶")
+                lbl.setStyleSheet("color: #bd93f9; font-weight: bold; font-size: 11px;")
+            else:
+                icon.setText("⚪")
+                lbl.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+                
+    def finish_progress(self):
+        self.progress_bar.setValue(100)
+        self.phase_lbl.setText("Analysis complete!")
+        for icon, lbl in self.stage_labels:
+            icon.setText("🟢")
+            lbl.setStyleSheet("color: #28a745; font-weight: bold; font-size: 11px;")
+        self.close_btn.setEnabled(True)
+        self.close_btn.setStyleSheet("background-color: #28a745; font-weight: bold; color: white;")
+
 
 class DFMMainWindow(QMainWindow):
     def __init__(self):
@@ -211,144 +473,290 @@ class DFMMainWindow(QMainWindow):
         self.main_layout.addWidget(top_frame)
 
     def create_main_content(self):
-        # Splitter to separate 3D Viewport from Right Panels
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setChildrenCollapsible(False)
+        # Stacked Widget to hold WelcomeWidget vs Main Layout
+        self.stacked_widget = QStackedWidget()
+        
+        # 1. WelcomeWidget
+        self.welcome_widget = WelcomeWidget(self)
+        self.stacked_widget.addWidget(self.welcome_widget)
+        
+        # 2. Main content splitter (CAD Viewport + Tab Dashboard)
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        
+        # Viewport container widget
+        viewport_container = QWidget()
+        v_layout = QVBoxLayout(viewport_container)
+        v_layout.setContentsMargins(0, 0, 0, 0)
+        v_layout.setSpacing(0)
+        
+        # View Preset Toolbar
+        view_toolbar = QFrame()
+        view_toolbar.setStyleSheet("background-color: #181825; border-bottom: 1px solid #3d3d5c; padding: 4px;")
+        view_toolbar.setFixedHeight(40)
+        vt_layout = QHBoxLayout(view_toolbar)
+        vt_layout.setContentsMargins(10, 2, 10, 2)
+        vt_layout.setSpacing(8)
+        
+        title_vt = QLabel("CAD Camera Presets:")
+        title_vt.setStyleSheet("font-size: 11px; font-weight: bold; color: #e20015; margin-right: 5px;")
+        vt_layout.addWidget(title_vt)
+        
+        def create_view_btn(text, slot):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setStyleSheet("QToolButton { background-color: #252538; color: white; border: 1px solid #3d3d5c; border-radius: 3px; padding: 4px 10px; font-size: 11px; } QToolButton:hover { background-color: #e20015; border-color: #e20015; }")
+            btn.clicked.connect(slot)
+            return btn
+            
+        vt_layout.addWidget(create_view_btn("🏠 Home", self.on_view_home))
+        vt_layout.addWidget(create_view_btn("📐 Isometric", self.on_view_iso))
+        vt_layout.addWidget(create_view_btn("⬆️ Top", self.on_view_top))
+        vt_layout.addWidget(create_view_btn("⬇️ Front", self.on_view_front))
+        vt_layout.addWidget(create_view_btn("➡️ Side", self.on_view_side))
+        vt_layout.addWidget(create_view_btn("🔍 Fit View", self.on_reset_view))
+        vt_layout.addStretch()
+        
+        v_layout.addWidget(view_toolbar)
         
         # 3D Viewport container
-        self.canvas = CustomViewer3d(self)
-        splitter.addWidget(self.canvas)
+        self.canvas = CustomViewer3d(viewport_container)
+        v_layout.addWidget(self.canvas)
+        
+        self.main_splitter.addWidget(viewport_container)
         
         # Tab Widget for different views
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.on_tab_changed)
         
-        # 0. CAD Model Info Tab
-        self.model_info_tab = QWidget()
-        self.setup_model_info_tab()
-        self.tabs.addTab(self.model_info_tab, "CAD Model Info")
+        # 0. Overview Tab
+        self.overview_tab = QWidget()
+        self.setup_overview_tab()
+        self.tabs.addTab(self.overview_tab, "Overview")
         
         # 1. Draft Analysis Tab
         self.draft_tab = QWidget()
         self.setup_draft_tab()
         self.tabs.addTab(self.draft_tab, "Draft Analysis")
         
-        # 2. Mold Split Tab
-        self.split_tab = QWidget()
-        self.setup_split_tab()
-        self.tabs.addTab(self.split_tab, "Mold Split")
+        # 2. Undercuts Tab
+        self.undercut_tab = QWidget()
+        self.setup_undercut_tab()
+        self.tabs.addTab(self.undercut_tab, "Undercuts")
         
         # 3. Parting Line Tab
         self.parting_tab = QWidget()
         self.setup_parting_tab()
         self.tabs.addTab(self.parting_tab, "Parting Line")
         
-        # 4. Exploded Mold View Tab
-        self.exploded_tab = QWidget()
-        self.setup_exploded_tab()
-        self.tabs.addTab(self.exploded_tab, "Exploded Mold View")
+        # 4. Moldability Advisor Tab
+        self.advisor_tab = QWidget()
+        self.setup_advisor_tab()
+        self.tabs.addTab(self.advisor_tab, "Moldability Advisor")
         
-        # 5. Z = 14.0 Exploded View Tab
-        self.z_14_tab = QWidget()
-        self.setup_z_14_tab()
-        self.tabs.addTab(self.z_14_tab, "Z = 14.0 Exploded View")
+        # 5. Reports Tab
+        self.reports_tab = QWidget()
+        self.setup_reports_tab()
+        self.tabs.addTab(self.reports_tab, "Reports")
         
-        splitter.addWidget(self.tabs)
+        self.main_splitter.addWidget(self.tabs)
         
         # Set sizes (70% and 30%)
-        splitter.setSizes([840, 360])
+        self.main_splitter.setSizes([840, 360])
         
-        self.main_layout.addWidget(splitter)
+        self.stacked_widget.addWidget(self.main_splitter)
+        self.main_layout.addWidget(self.stacked_widget)
+        
+        # Initially show welcome screen
+        self.stacked_widget.setCurrentIndex(0)
+
+    def create_scrollable_layout(self, tab_widget):
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(15, 15, 15, 15)
+        scroll_layout.setSpacing(10)
+        
+        scroll.setWidget(scroll_content)
+        tab_layout.addWidget(scroll)
+        
+        return scroll_layout
 
     def create_status_bar(self):
         status_bar = QStatusBar()
         self.setStatusBar(status_bar)
         self.statusBar().showMessage("No STEP file loaded.")
 
-    def setup_model_info_tab(self):
-        layout = QVBoxLayout(self.model_info_tab)
-        layout.setContentsMargins(15, 15, 15, 15)
+    def setup_overview_tab(self):
+        scroll_layout = self.create_scrollable_layout(self.overview_tab)
         
-        panel = QFrame()
-        panel.setProperty("class", "panel")
-        panel_layout = QVBoxLayout(panel)
+        # 1. Classification banner card
+        banner_frame = QFrame()
+        banner_frame.setObjectName("banner_card")
+        banner_frame.setStyleSheet("background-color: #252538; border: 1px solid #3d3d5c; border-radius: 6px; padding: 12px;")
+        bf_layout = QVBoxLayout(banner_frame)
+        bf_layout.setContentsMargins(10, 10, 10, 10)
+        bf_layout.setSpacing(8)
         
-        title = QLabel("CAD Model Specifications")
-        title.setProperty("class", "section-title")
-        panel_layout.addWidget(title)
+        status_row = QHBoxLayout()
+        status_lbl = QLabel("Design for Manufacturability Status:")
+        status_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #a0a0c0;")
+        self.overview_status_badge = QLabel("-")
+        self.overview_status_badge.setFixedWidth(180)
+        self.overview_status_badge.setFixedHeight(26)
+        self.overview_status_badge.setAlignment(Qt.AlignCenter)
+        self.overview_status_badge.setStyleSheet("font-weight: bold; font-size: 12px; border-radius: 4px; background-color: #444454; color: white;")
         
-        _, self.info_val_filename = self.create_stat_row(panel_layout, "Filename:")
-        _, self.info_val_faces = self.create_stat_row(panel_layout, "Total Faces:")
+        status_row.addWidget(status_lbl)
+        status_row.addWidget(self.overview_status_badge)
+        status_row.addStretch()
+        bf_layout.addLayout(status_row)
         
-        title_bbox = QLabel("Bounding Box Dimensions")
-        title_bbox.setProperty("class", "section-title")
-        panel_layout.addWidget(title_bbox)
+        # Action Recommended Row
+        self.overview_action_lbl = QLabel("No analysis run yet.")
+        self.overview_action_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #e20015; margin-top: 5px;")
+        bf_layout.addWidget(self.overview_action_lbl)
         
-        _, self.info_val_bbox_x = self.create_stat_row(panel_layout, "X Span:")
-        _, self.info_val_bbox_y = self.create_stat_row(panel_layout, "Y Span:")
-        _, self.info_val_bbox_z = self.create_stat_row(panel_layout, "Z Span:")
+        # Structured Assistant Explanation
+        self.overview_advice_widget = QWidget()
+        adv_lyt = QVBoxLayout(self.overview_advice_widget)
+        adv_lyt.setContentsMargins(0, 5, 0, 0)
+        adv_lyt.setSpacing(6)
         
-        title_surf = QLabel("Surface Type Statistics")
-        title_surf.setProperty("class", "section-title")
-        panel_layout.addWidget(title_surf)
+        self.adv_what = QLabel("• What: -")
+        self.adv_why = QLabel("• Why: -")
+        self.adv_importance = QLabel("• Importance: -")
+        self.adv_action = QLabel("• Improvement: -")
         
-        from PyQt5.QtWidgets import QTextEdit
-        self.info_surf_stats_txt = QTextEdit()
-        self.info_surf_stats_txt.setReadOnly(True)
-        self.info_surf_stats_txt.setStyleSheet("background-color: #181825; border: 1px solid #3d3d5c; font-family: 'Courier New', monospace; font-size: 11px;")
-        panel_layout.addWidget(self.info_surf_stats_txt)
+        for lbl in [self.adv_what, self.adv_why, self.adv_importance, self.adv_action]:
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("font-size: 11px; color: #c0c0c0;")
+            adv_lyt.addWidget(lbl)
+            
+        bf_layout.addWidget(self.overview_advice_widget)
+        scroll_layout.addWidget(banner_frame)
         
-        panel_layout.addStretch()
-        layout.addWidget(panel)
+        # 2. KPI Cards Grid
+        kpi_group = QGroupBox("Key Manufacturing KPIs")
+        kpi_group.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3d3d5c; border-radius: 6px; margin-top: 10px; padding-top: 15px; color: #e20015; }")
+        kpi_grid = QGridLayout(kpi_group)
+        kpi_grid.setSpacing(12)
+        kpi_grid.setContentsMargins(10, 10, 10, 10)
+        
+        def create_kpi_card(title):
+            card = QFrame()
+            card.setStyleSheet("background-color: #1a1c2a; border: 1px solid #3d3d5c; border-radius: 6px; padding: 10px;")
+            c_lyt = QVBoxLayout(card)
+            c_lyt.setContentsMargins(8, 8, 8, 8)
+            c_lyt.setSpacing(4)
+            
+            t_lbl = QLabel(title)
+            t_lbl.setStyleSheet("font-size: 11px; color: #a0a0c0; text-transform: uppercase;")
+            v_lbl = QLabel("-")
+            v_lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff;")
+            sub_lbl = QLabel("")
+            sub_lbl.setStyleSheet("font-size: 10px; color: #7f7f8f;")
+            
+            c_lyt.addWidget(t_lbl)
+            c_lyt.addWidget(v_lbl)
+            c_lyt.addWidget(sub_lbl)
+            return card, v_lbl, sub_lbl
+            
+        card_score, self.kpi_val_score, self.kpi_sub_score = create_kpi_card("Moldability Score")
+        card_dir, self.kpi_val_dir, self.kpi_sub_dir = create_kpi_card("Recommended Pull Axis")
+        card_undercut, self.kpi_val_undercut, self.kpi_sub_undercut = create_kpi_card("Undercut Area")
+        card_parting, self.kpi_val_parting, self.kpi_sub_parting = create_kpi_card("Optimal Parting Plane")
+        card_draft, self.kpi_val_draft, self.kpi_sub_draft = create_kpi_card("Draft Compliance")
+        card_complexity, self.kpi_val_complexity, self.kpi_sub_complexity = create_kpi_card("Parting Line Complexity")
+        
+        kpi_grid.addWidget(card_score, 0, 0)
+        kpi_grid.addWidget(card_dir, 0, 1)
+        kpi_grid.addWidget(card_undercut, 1, 0)
+        kpi_grid.addWidget(card_parting, 1, 1)
+        kpi_grid.addWidget(card_draft, 2, 0)
+        kpi_grid.addWidget(card_complexity, 2, 1)
+        
+        scroll_layout.addWidget(kpi_group)
+        
+        # 3. Model Spec panel
+        spec_group = QGroupBox("CAD Geometry Specifications")
+        spec_group.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3d3d5c; border-radius: 6px; margin-top: 10px; padding-top: 15px; color: #e20015; }")
+        spec_lyt = QVBoxLayout(spec_group)
+        spec_lyt.setContentsMargins(10, 10, 10, 10)
+        
+        _, self.spec_val_filename = self.create_stat_row(spec_lyt, "Filename:")
+        _, self.spec_val_faces = self.create_stat_row(spec_lyt, "Total Face Count:")
+        _, self.spec_val_bbox_x = self.create_stat_row(spec_lyt, "Bounding Box X:")
+        _, self.spec_val_bbox_y = self.create_stat_row(spec_lyt, "Bounding Box Y:")
+        _, self.spec_val_bbox_z = self.create_stat_row(spec_lyt, "Bounding Box Z:")
+        
+        scroll_layout.addWidget(spec_group)
+        scroll_layout.addStretch()
 
-    def update_model_info_tab(self):
-        if not self.engine or not self.engine.part:
-            self.info_val_filename.setText("-")
-            self.info_val_faces.setText("-")
-            self.info_val_bbox_x.setText("-")
-            self.info_val_bbox_y.setText("-")
-            self.info_val_bbox_z.setText("-")
-            self.info_surf_stats_txt.setText("No CAD model loaded.")
+    def on_view_home(self):
+        if hasattr(self, 'canvas') and self.canvas._display:
+            self.canvas._display.View.SetProj(1, -1, 1)
+            self.canvas._display.View.SetUp(0, 0, 1)
+            self.canvas._display.FitAll()
+            
+    def on_view_iso(self):
+        self.on_view_home()
+        
+    def on_view_top(self):
+        if hasattr(self, 'canvas') and self.canvas._display:
+            self.canvas._display.View.SetProj(0, 0, 1)
+            self.canvas._display.View.SetUp(0, 1, 0)
+            self.canvas._display.FitAll()
+            
+    def on_view_front(self):
+        if hasattr(self, 'canvas') and self.canvas._display:
+            self.canvas._display.View.SetProj(0, -1, 0)
+            self.canvas._display.View.SetUp(0, 0, 1)
+            self.canvas._display.FitAll()
+            
+    def on_view_side(self):
+        if hasattr(self, 'canvas') and self.canvas._display:
+            self.canvas._display.View.SetProj(1, 0, 0)
+            self.canvas._display.View.SetUp(0, 0, 1)
+            self.canvas._display.FitAll()
+
+    def render_undercut_view(self):
+        print("render_undercut_view starting", flush=True)
+        if not self.analysis_result or not self.engine:
             return
+        self.display.EraseAll()
+        self.display.SetSelectionModeFace()
+        draft_details = self.analysis_result.draft_analysis["details"]
+        
+        for detail in draft_details:
+            face_id = detail["face_id"]
+            draft_angle = detail["draft_angle"]
+            face = self.engine.face_map[face_id]
             
-        # Filename
-        self.info_val_filename.setText(os.path.basename(self.filepath))
-        # Face count
-        self.info_val_faces.setText(str(len(self.engine.part.faces)))
+            if draft_angle is not None and draft_angle < 0.0:
+                color = Quantity_Color(0.0, 0.3, 1.0, Quantity_TOC_RGB) # Blue undercut
+                ais_shapes = self.display.DisplayColoredShape(face, color, update=False)
+                for ais_shape in ais_shapes:
+                    ais_shape.SetDisplayMode(1)
+            else:
+                color = Quantity_Color(0.7, 0.7, 0.7, Quantity_TOC_RGB) # Neutral gray
+                ais_shapes = self.display.DisplayColoredShape(face, color, update=False)
+                for ais_shape in ais_shapes:
+                    ais_shape.SetDisplayMode(1)
+                    ais_shape.SetTransparency(0.6)
         
-        # Bounding box
-        from OCC.Core.Bnd import Bnd_Box
-        from OCC.Core.BRepBndLib import brepbndlib
-        bbox = Bnd_Box()
-        brepbndlib.Add(self.engine.part.shape, bbox)
-        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
-        
-        dx = xmax - xmin
-        dy = ymax - ymin
-        dz = zmax - zmin
-        
-        self.info_val_bbox_x.setText(f"{dx:.2f} mm  ({xmin:.1f} to {xmax:.1f})")
-        self.info_val_bbox_y.setText(f"{dy:.2f} mm  ({ymin:.1f} to {ymax:.1f})")
-        self.info_val_bbox_z.setText(f"{dz:.2f} mm  ({zmin:.1f} to {zmax:.1f})")
-        
-        # Surface type statistics
-        from collections import Counter
-        surf_types = [face.surface_type for face in self.engine.part.faces]
-        counts = Counter(surf_types)
-        
-        stats_lines = []
-        stats_lines.append(f"{'Surface Type':<16} | {'Count':<6} | {'Percentage':<10}")
-        stats_lines.append("-" * 38)
-        total = len(surf_types) or 1
-        for s_type, count in sorted(counts.items(), key=lambda x: x[1], reverse=True):
-            pct = (count / total) * 100.0
-            stats_lines.append(f"{s_type:<16} | {count:<6d} | {pct:.1f}%")
-            
-        self.info_surf_stats_txt.setText("\n".join(stats_lines))
+        self.display.FitAll()
+        print("render_undercut_view completed", flush=True)
 
     def setup_draft_tab(self):
-        layout = QVBoxLayout(self.draft_tab)
-        layout.setContentsMargins(15, 15, 15, 15)
+        scroll_layout = self.create_scrollable_layout(self.draft_tab)
         
         panel = QFrame()
         panel.setProperty("class", "panel")
@@ -389,54 +797,94 @@ class DFMMainWindow(QMainWindow):
         panel_layout.addWidget(self.create_legend_row("#004CFF", "Undercut"))
         
         panel_layout.addStretch()
-        layout.addWidget(panel)
+        scroll_layout.addWidget(panel)
 
-    def setup_split_tab(self):
-        layout = QVBoxLayout(self.split_tab)
-        layout.setContentsMargins(15, 15, 15, 15)
+    def setup_undercut_tab(self):
+        scroll_layout = self.create_scrollable_layout(self.undercut_tab)
         
         panel = QFrame()
         panel.setProperty("class", "panel")
         panel_layout = QVBoxLayout(panel)
         
-        title = QLabel("Mold Split Classification")
+        title = QLabel("Undercut & Mold Split")
         title.setProperty("class", "section-title")
         panel_layout.addWidget(title)
         
-        _, self.val_core_faces = self.create_stat_row(panel_layout, "Core Faces:")
-        _, self.val_cavity_faces = self.create_stat_row(panel_layout, "Cavity Faces:")
-        _, self.val_neutral_faces = self.create_stat_row(panel_layout, "Neutral Faces:")
+        # Mode selector
+        mode_lbl = QLabel("Viewport Visualization:")
+        mode_lbl.setProperty("class", "lbl-text")
+        self.undercut_view_combo = QComboBox()
+        self.undercut_view_combo.addItems(["Highlight Undercuts", "Show Core/Cavity Split"])
+        self.undercut_view_combo.currentTextChanged.connect(self.on_undercut_view_changed)
+        
+        panel_layout.addWidget(mode_lbl)
+        panel_layout.addWidget(self.undercut_view_combo)
+        
+        title_stats = QLabel("Undercut Statistics")
+        title_stats.setProperty("class", "section-title")
+        panel_layout.addWidget(title_stats)
+        
+        _, self.undercut_val_count = self.create_stat_row(panel_layout, "Undercut Faces:")
+        _, self.undercut_val_area = self.create_stat_row(panel_layout, "Undercut Area:")
+        _, self.undercut_val_complexity = self.create_stat_row(panel_layout, "Tooling Complexity:")
+        
+        title_split = QLabel("Mold Split Classification")
+        title_split.setProperty("class", "section-title")
+        panel_layout.addWidget(title_split)
+        
+        _, self.undercut_val_core = self.create_stat_row(panel_layout, "Core Faces:")
+        _, self.undercut_val_cavity = self.create_stat_row(panel_layout, "Cavity Faces:")
+        _, self.undercut_val_neutral = self.create_stat_row(panel_layout, "Neutral Faces:")
         
         title_silhouette = QLabel("Silhouette Info")
         title_silhouette.setProperty("class", "section-title")
         panel_layout.addWidget(title_silhouette)
         
-        _, self.val_silhouette_faces = self.create_stat_row(panel_layout, "Silhouette Faces:")
-        _, self.val_silhouette_area = self.create_stat_row(panel_layout, "Silhouette Area:")
+        _, self.undercut_val_sil_faces = self.create_stat_row(panel_layout, "Silhouette Faces:")
+        _, self.undercut_val_sil_area = self.create_stat_row(panel_layout, "Silhouette Area:")
         
-        title_parting = QLabel("Parting Line Candidates")
-        title_parting.setProperty("class", "section-title")
-        panel_layout.addWidget(title_parting)
-        
-        _, self.val_parting_candidates = self.create_stat_row(panel_layout, "Parting Candidates:")
-        _, self.val_parting_length_split = self.create_stat_row(panel_layout, "Parting Line Length:")
-        
-        title_legend = QLabel("Legend")
-        title_legend.setProperty("class", "section-title")
-        panel_layout.addWidget(title_legend)
-        
-        panel_layout.addWidget(self.create_legend_row("#E63333", "Cavity Faces"))
-        panel_layout.addWidget(self.create_legend_row("#3366E6", "Core Faces"))
-        panel_layout.addWidget(self.create_legend_row("#FF0080", "Silhouette Faces"))
-        panel_layout.addWidget(self.create_legend_row("#B2B2B2", "Neutral/Remaining"))
-        panel_layout.addWidget(self.create_legend_row("#FFCC00", "Parting Line Candidate"))
+        # Legend section
+        self.undercut_legend_group = QGroupBox("Legend")
+        self.undercut_legend_group.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3d3d5c; border-radius: 6px; margin-top: 10px; padding-top: 15px; color: #e20015; }")
+        self.undercut_legend_layout = QVBoxLayout(self.undercut_legend_group)
+        self.undercut_legend_layout.setContentsMargins(10, 10, 10, 10)
+        panel_layout.addWidget(self.undercut_legend_group)
         
         panel_layout.addStretch()
-        layout.addWidget(panel)
+        scroll_layout.addWidget(panel)
+        
+        self.update_undercut_legend()
+
+    def update_undercut_legend(self):
+        # Clear layout
+        while self.undercut_legend_layout.count():
+            item = self.undercut_legend_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+                
+        mode = self.undercut_view_combo.currentText()
+        if mode == "Highlight Undercuts":
+            self.undercut_legend_layout.addWidget(self.create_legend_row("#004CFF", "Undercut Face (Blocked)"))
+            self.undercut_legend_layout.addWidget(self.create_legend_row("#B2B2B2", "Neutral Face (Safe/Drafted)"))
+        else:
+            self.undercut_legend_layout.addWidget(self.create_legend_row("#E63333", "Cavity Faces (Pull +)"))
+            self.undercut_legend_layout.addWidget(self.create_legend_row("#3366E6", "Core Faces (Pull -)"))
+            self.undercut_legend_layout.addWidget(self.create_legend_row("#FF0080", "Silhouette/Transition Faces"))
+            self.undercut_legend_layout.addWidget(self.create_legend_row("#B2B2B2", "Neutral/Remaining"))
+
+    def on_undercut_view_changed(self, text):
+        self.update_undercut_legend()
+        if self.analysis_result:
+            self.display.EraseAll()
+            if text == "Highlight Undercuts":
+                self.render_undercut_view()
+            else:
+                self.render_mold_split()
+            self.display.View.Redraw()
 
     def setup_parting_tab(self):
-        layout = QVBoxLayout(self.parting_tab)
-        layout.setContentsMargins(15, 15, 15, 15)
+        scroll_layout = self.create_scrollable_layout(self.parting_tab)
         
         panel = QFrame()
         panel.setProperty("class", "panel")
@@ -509,24 +957,49 @@ class DFMMainWindow(QMainWindow):
         panel_layout.addWidget(self.create_legend_row("#00FFFF", "Mold Direction Arrow"))
         panel_layout.addWidget(self.create_legend_row("#E20015", "Cavity Block (70% Transparent)"))
         panel_layout.addWidget(self.create_legend_row("#004CFF", "Core Block (70% Transparent)"))
+
+        # ---- Mold Separation Slider ----
+        title_sep = QLabel("Mold Separation")
+        title_sep.setProperty("class", "section-title")
+        panel_layout.addWidget(title_sep)
+
+        sep_desc = QLabel("Drag to animate core/cavity opening:")
+        sep_desc.setProperty("class", "lbl-text")
+        panel_layout.addWidget(sep_desc)
+
+        self.parting_sep_slider = QSlider(Qt.Horizontal)
+        self.parting_sep_slider.setMinimum(0)
+        self.parting_sep_slider.setMaximum(200)
+        self.parting_sep_slider.setValue(80)   # Default: slightly open
+        self.parting_sep_slider.setTickInterval(20)
+        self.parting_sep_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3d3d5c; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #bd93f9; border: 2px solid #ff79c6;
+                width: 16px; height: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #bd93f9; border-radius: 3px; }
+        """)
+
+        sep_val_row = QHBoxLayout()
+        sep_val_lbl = QLabel("Separation:")
+        sep_val_lbl.setProperty("class", "lbl-text")
+        self.parting_sep_val_lbl = QLabel("80%")
+        self.parting_sep_val_lbl.setProperty("class", "val-text")
+        sep_val_row.addWidget(sep_val_lbl)
+        sep_val_row.addWidget(self.parting_sep_val_lbl)
+        panel_layout.addLayout(sep_val_row)
+        panel_layout.addWidget(self.parting_sep_slider)
+
+        def on_sep_slider_changed(val):
+            self.parting_separation = val / 100.0
+            self.parting_sep_val_lbl.setText(f"{val}%")
+            if self.analysis_result and self.engine:
+                self.render_parting_line()
+
+        self.parting_sep_slider.valueChanged.connect(on_sep_slider_changed)
+        self.parting_separation = 0.80  # initial value
         
         panel_layout.addStretch()
-        
-        # Export Buttons
-        btn_layout = QHBoxLayout()
-        self.btn_export_json = QPushButton("Export JSON")
-        self.btn_export_json.setEnabled(False)
-        self.btn_export_json.clicked.connect(self.on_export_json)
-        
-        self.btn_export_pdf = QPushButton("Export PDF")
-        self.btn_export_pdf.setEnabled(False)
-        self.btn_export_pdf.clicked.connect(self.on_export_pdf)
-        
-        btn_layout.addWidget(self.btn_export_json)
-        btn_layout.addWidget(self.btn_export_pdf)
-        panel_layout.addLayout(btn_layout)
-        
-        layout.addWidget(panel)
+        scroll_layout.addWidget(panel)
 
     def create_stat_row(self, layout, label_text):
         row = QWidget()
@@ -567,14 +1040,20 @@ class DFMMainWindow(QMainWindow):
 
     def update_ui_placeholders(self):
         for label in [
-            self.info_val_filename, self.info_val_faces,
-            self.info_val_bbox_x, self.info_val_bbox_y, self.info_val_bbox_z,
+            self.kpi_val_score, self.kpi_sub_score,
+            self.kpi_val_dir, self.kpi_sub_dir,
+            self.kpi_val_undercut, self.kpi_sub_undercut,
+            self.kpi_val_parting, self.kpi_sub_parting,
+            self.kpi_val_draft, self.kpi_sub_draft,
+            self.kpi_val_complexity, self.kpi_sub_complexity,
+            self.spec_val_filename, self.spec_val_faces,
+            self.spec_val_bbox_x, self.spec_val_bbox_y, self.spec_val_bbox_z,
             self.val_min_draft, self.val_max_draft, self.val_avg_draft,
             self.val_undercut_faces, self.val_undercut_area,
             self.val_mold_dir_x, self.val_mold_dir_y, self.val_mold_dir_z, self.val_mold_dir_conf,
-            self.val_core_faces, self.val_cavity_faces, self.val_neutral_faces,
-            self.val_silhouette_faces, self.val_silhouette_area,
-            self.val_parting_candidates, self.val_parting_length_split,
+            self.undercut_val_count, self.undercut_val_area, self.undercut_val_complexity,
+            self.undercut_val_core, self.undercut_val_cavity, self.undercut_val_neutral,
+            self.undercut_val_sil_faces, self.undercut_val_sil_area,
             self.val_parting_status, self.val_parting_length, self.val_closed_loop,
             self.val_loop_count,
             self.val_pull_dir, self.val_parting_plane_pos, self.val_undercut_count, self.val_draft_violations,
@@ -582,13 +1061,18 @@ class DFMMainWindow(QMainWindow):
             self.demo_val_plane_pos, self.demo_val_classification,
             self.demo_val_score, self.demo_val_undercuts, self.demo_val_area,
             self.demo_val_crossing, self.demo_val_core_faces, self.demo_val_cavity_faces,
-            self.demo_val_complexity, self.demo_val_cavity_dir, self.demo_val_core_dir,
-            self.z14_val_score, self.z14_val_undercuts, self.z14_val_undercut_area,
-            self.z14_val_core_faces, self.z14_val_cavity_faces, self.z14_val_crossing_faces
+            self.demo_val_complexity, self.demo_val_cavity_dir, self.demo_val_core_dir
         ]:
             label.setText("-")
             
-        self.info_surf_stats_txt.setText("No CAD model loaded.")
+        self.overview_status_badge.setText("-")
+        self.overview_status_badge.setStyleSheet("background-color: #444454; color: #a0a0a0; border-radius: 4px; font-weight: bold;")
+        self.overview_action_lbl.setText("No analysis run yet.")
+        self.adv_what.setText("• What: -")
+        self.adv_why.setText("• Why: -")
+        self.adv_importance.setText("• Importance: -")
+        self.adv_action.setText("• Improvement: -")
+        
         self.parting_badge_status.setText("-")
         self.parting_badge_status.setStyleSheet("background-color: #444454; color: #a0a0a0; border-radius: 4px;")
         self.parting_val_justification.setText("No analysis run.")
@@ -598,13 +1082,25 @@ class DFMMainWindow(QMainWindow):
         self.demo_val_reason.setText("No analysis run.")
         self.demo_comp_table.setText("No analysis run.")
         
-        self.z14_val_justification.setText("No analysis run.")
-        self.z14_badge_status.setText("-")
-        self.z14_badge_status.setStyleSheet("background-color: #444454; color: #a0a0a0; border-radius: 4px;")
-            
         self.loop_details_txt.setText("No analysis run.")
         self.btn_export_json.setEnabled(False)
         self.btn_export_pdf.setEnabled(False)
+
+    def update_model_info_tab(self):
+        if not self.engine or not self.engine.part:
+            return
+        self.stacked_widget.setCurrentIndex(1)
+        self.spec_val_filename.setText(os.path.basename(self.filepath))
+        self.spec_val_faces.setText(str(len(self.engine.part.faces)))
+        
+        from OCC.Core.Bnd import Bnd_Box
+        from OCC.Core.BRepBndLib import brepbndlib
+        bbox = Bnd_Box()
+        brepbndlib.Add(self.engine.part.shape, bbox)
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+        self.spec_val_bbox_x.setText(f"{xmax - xmin:.2f} mm")
+        self.spec_val_bbox_y.setText(f"{ymax - ymin:.2f} mm")
+        self.spec_val_bbox_z.setText(f"{zmax - zmin:.2f} mm")
 
     def on_open_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -676,8 +1172,25 @@ class DFMMainWindow(QMainWindow):
         self.tabs.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
+        progress_dialog = DFMProgressDialog(self)
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.show()
+        QApplication.processEvents()
+
+        msg_to_progress = {
+            "Loading STEP Geometry...": (10, "Loading STEP Geometry...", 1),
+            "Optimizing Mold Direction...": (30, "Optimizing Mold Direction...", 3),
+            "Computing Draft Analysis...": (50, "Computing Draft Analysis...", 4),
+            "Detecting Undercuts...": (70, "Detecting Undercuts...", 5),
+            "Building Face Topology...": (80, "Building Face Topology...", 6),
+            "Generating Parting Line...": (90, "Generating Parting Line...", 7),
+            "Finalizing Report...": (95, "Finalizing Report...", 8)
+        }
+
         def progress_callback(msg):
             self.statusBar().showMessage(msg)
+            pct, phase, stages_count = msg_to_progress.get(msg, (50, msg, 4))
+            progress_dialog.update_progress(pct, phase, stages_count)
             QApplication.processEvents()
             
         material = self.material_combo.currentText()
@@ -693,11 +1206,18 @@ class DFMMainWindow(QMainWindow):
             
             self.btn_export_json.setEnabled(True)
             self.btn_export_pdf.setEnabled(True)
+            
+            progress_dialog.finish_progress()
+            if os.environ.get("DFM_TEST_MODE") == "1":
+                progress_dialog.accept()
+            else:
+                progress_dialog.exec_()
         except Exception as e:
             print(f"Analysis failed: {str(e)}", flush=True)
             import traceback
             traceback.print_exc()
             self.statusBar().showMessage(f"Analysis failed: {str(e)}")
+            progress_dialog.close()
             QMessageBox.critical(self, "Error", f"Analysis failed:\n{str(e)}")
         finally:
             # Re-enable controls
@@ -712,31 +1232,152 @@ class DFMMainWindow(QMainWindow):
         if not res:
             return
             
-        # Draft Tab
+        total_area = sum(f.area for f in self.engine.part.faces) or 1.0
+        total_faces = len(self.engine.part.faces) or 1.0
+        threshold = MATERIAL_THRESHOLDS.get(res.material, 1.0)
+        
+        # 1. Overview Tab
+        score = res.moldability_score
+        self.kpi_val_score.setText(f"{score:.1f} / 100")
+        if score > 90:
+            score_desc = "Excellent"
+        elif score > 75:
+            score_desc = "Good"
+        elif score > 50:
+            score_desc = "Fair"
+        else:
+            score_desc = "Poor"
+        self.kpi_sub_score.setText(f"Rating: {score_desc}")
+        
+        d = res.mold_direction
+        if abs(d[0]) > 0.9:
+            recommended_axis = "X-Axis"
+        elif abs(d[1]) > 0.9:
+            recommended_axis = "Y-Axis"
+        else:
+            recommended_axis = "Z-Axis"
+            
+        self.kpi_val_dir.setText(recommended_axis)
+        self.kpi_sub_dir.setText(f"[{d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}]")
+        
+        self.kpi_val_undercut.setText(f"{res.undercuts['count']} Faces")
+        self.kpi_sub_undercut.setText(f"{res.undercuts['total_area_mm2']:.1f} mm² ({(res.undercuts['total_area_mm2']/total_area)*100:.1f}%)")
+        
+        self.kpi_val_parting.setText(f"{recommended_axis[0]} = {res.optimal_z:.2f} mm")
+        self.kpi_sub_parting.setText("Flat parting plane")
+        
+        safe_faces = int(total_faces - res.draft_analysis['draft_violation_count'])
+        self.kpi_val_draft.setText(f"{(safe_faces/total_faces)*100:.1f}%")
+        self.kpi_sub_draft.setText(f"({safe_faces}/{int(total_faces)} faces safe)")
+        
+        complexity_score = res.optimal_stats.get("complexity", 0.0)
+        if complexity_score > 25:
+            complexity_level = "High"
+        elif complexity_score > 8:
+            complexity_level = "Medium"
+        else:
+            complexity_level = "Low"
+        self.kpi_val_complexity.setText(complexity_level)
+        self.kpi_sub_complexity.setText(f"Score: {complexity_score:.1f}")
+        
+        # Classification banner
+        classification = res.optimal_stats.get("classification", "PARTIALLY MOLDABLE")
+        self.overview_status_badge.setText(classification)
+        if classification == "MOLDABLE":
+            self.overview_status_badge.setStyleSheet("font-weight: bold; font-size: 12px; border-radius: 4px; background-color: #28a745; color: white;")
+        elif classification == "PARTIALLY MOLDABLE":
+            self.overview_status_badge.setStyleSheet("font-weight: bold; font-size: 12px; border-radius: 4px; background-color: #f9a825; color: black;")
+        elif classification == "SIDE ACTION REQUIRED":
+            self.overview_status_badge.setStyleSheet("font-weight: bold; font-size: 12px; border-radius: 4px; background-color: #fd7e14; color: white;")
+        else:
+            self.overview_status_badge.setStyleSheet("font-weight: bold; font-size: 12px; border-radius: 4px; background-color: #dc3545; color: white;")
+            
+        # Recommended manufacturing action
+        if classification == "MOLDABLE":
+            action_text = "Proceed with current design. Ready for tooling split."
+        elif classification == "PARTIALLY MOLDABLE":
+            action_text = f"Action Required: Add a minimum {threshold}° draft taper to vertical walls."
+        elif classification == "SIDE ACTION REQUIRED":
+            if recommended_axis == "Z-Axis":
+                action_text = "Add side slider along Y-axis."
+            elif recommended_axis == "Y-Axis":
+                action_text = "Add side slider along Z-axis."
+            else:
+                action_text = "Add side slider along Y-axis."
+        else:
+            action_text = "Redesign locking areas, divide part, or adjust draw orientation."
+            
+        self.overview_action_lbl.setText(f"Recommended Action: {action_text}")
+        
+        # Structured Assistant Explanation
+        templates = {
+            "MOLDABLE": {
+                "what": "No draft angle violations or undercut faces detected.",
+                "why": f"All part surfaces incline away from the draw axis at angles greater than the material's threshold ({threshold}°).",
+                "importance": "Allows the part to slide out of the mold cavity cleanly without rubbing or creating surface scuffs.",
+                "action": "Proceed with current design. Ready for tooling split."
+            },
+            "PARTIALLY MOLDABLE": {
+                "what": f"Slight draft violations detected ({res.draft_analysis['draft_violation_count']} vertical wall sections with 0° draft).",
+                "why": "Some side walls are parallel to the draw axis, creating frictional resistance during eject.",
+                "importance": "Can cause tool wear, part scuffing, or deformation during demolding.",
+                "action": f"Add a minimum {threshold}° draft taper to the highlighted warning faces."
+            },
+            "SIDE ACTION REQUIRED": {
+                "what": f"Mechanical locks ({res.undercuts['count']} undercut faces or cylinders) detected perpendicular to the draw direction.",
+                "why": "Features protrude outwards (e.g. lateral tubing cylinders), blocking standard two-plate mold separation.",
+                "importance": "Forces tool locks, making part ejection impossible without destroying the part or tool.",
+                "action": f"Implement lateral mold sliders/lifters perpendicular to the draw direction ({action_text})."
+            },
+            "NOT MOLDABLE": {
+                "what": f"Severe undercut area ({res.undercuts['total_area_mm2']:.1f} mm²) or heavy feature crossings ({res.optimal_stats['crossing_faces']} faces).",
+                "why": "Excessive locking geometry or deep internal pockets that cannot be split by standard side actions.",
+                "importance": "High risk of eject failure, high tooling cost, or mechanical lockouts.",
+                "action": "Redesign locking areas, divide part into sub-assemblies, or adjust draw orientation."
+            }
+        }
+        
+        tpl = templates.get(classification, templates["PARTIALLY MOLDABLE"])
+        self.adv_what.setText(f"• What: {tpl['what']}")
+        self.adv_why.setText(f"• Why: {tpl['why']}")
+        self.adv_importance.setText(f"• Importance: {tpl['importance']}")
+        self.adv_action.setText(f"• Improvement: {tpl['action']}")
+        
+        # Geometry Specs
+        self.spec_val_filename.setText(res.filename)
+        self.spec_val_faces.setText(str(int(total_faces)))
+        
+        from OCC.Core.Bnd import Bnd_Box
+        from OCC.Core.BRepBndLib import brepbndlib
+        bbox = Bnd_Box()
+        brepbndlib.Add(self.engine.part.shape, bbox)
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+        self.spec_val_bbox_x.setText(f"{xmax - xmin:.2f} mm")
+        self.spec_val_bbox_y.setText(f"{ymax - ymin:.2f} mm")
+        self.spec_val_bbox_z.setText(f"{zmax - zmin:.2f} mm")
+
+        # 2. Draft Tab
         self.val_min_draft.setText(f"{res.draft_analysis['min_draft_deg']:.2f}°")
         self.val_max_draft.setText(f"{res.draft_analysis['max_draft_deg']:.2f}°")
         self.val_avg_draft.setText(f"{res.draft_analysis['avg_draft_deg']:.2f}°")
-        
         self.val_undercut_faces.setText(str(res.undercuts['count']))
         self.val_undercut_area.setText(f"{res.undercuts['total_area_mm2']:.2f} mm²")
-        
         self.val_mold_dir_x.setText(f"{res.mold_direction[0]:.3f}")
         self.val_mold_dir_y.setText(f"{res.mold_direction[1]:.3f}")
         self.val_mold_dir_z.setText(f"{res.mold_direction[2]:.3f}")
         self.val_mold_dir_conf.setText(f"{self.engine.confidence * 100:.1f}%")
         
-        # Mold Split Tab
-        self.val_core_faces.setText(str(res.mold_split['core_faces']))
-        self.val_cavity_faces.setText(str(res.mold_split['cavity_faces']))
-        self.val_neutral_faces.setText(str(res.mold_split['neutral_faces']))
+        # 3. Undercuts Tab
+        self.undercut_val_count.setText(str(res.undercuts['count']))
+        self.undercut_val_area.setText(f"{res.undercuts['total_area_mm2']:.2f} mm² ({(res.undercuts['total_area_mm2']/total_area)*100:.1f}%)")
+        self.undercut_val_complexity.setText(complexity_level)
+        self.undercut_val_core.setText(str(res.mold_split['core_faces']))
+        self.undercut_val_cavity.setText(str(res.mold_split['cavity_faces']))
+        self.undercut_val_neutral.setText(str(res.mold_split['neutral_faces']))
+        self.undercut_val_sil_faces.setText(str(len(res.mold_split['silhouette_faces'])))
+        self.undercut_val_sil_area.setText(f"{res.mold_split['silhouette_area']:.2f} mm²")
         
-        self.val_silhouette_faces.setText(str(len(res.mold_split['silhouette_faces'])))
-        self.val_silhouette_area.setText(f"{res.mold_split['silhouette_area']:.2f} mm²")
-        
-        self.val_parting_candidates.setText(str(res.parting_line['edge_count']))
-        self.val_parting_length_split.setText(f"{res.parting_line['total_length_mm']:.2f} mm")
-        
-        # Parting Line Tab
+        # 4. Parting Line Tab
         self.val_parting_status.setText("✅ Detected" if res.parting_line['edge_count'] > 0 else "❌ None")
         self.val_parting_length.setText(f"{res.parting_line['total_length_mm']:.2f} mm")
         self.val_closed_loop.setText("Yes" if res.parting_line['is_closed_loop'] else "No")
@@ -757,11 +1398,8 @@ class DFMMainWindow(QMainWindow):
         self.val_parting_plane_pos.setText(f"{res.optimal_z:.2f} mm")
         self.val_undercut_count.setText(str(res.optimal_stats['undercut_count']))
         self.val_draft_violations.setText(str(res.draft_analysis['draft_violation_count']))
-        
-        score = res.moldability_score
         self.val_dfm_score.setText(f"{score:.2f} / 100")
-
-        classification = res.optimal_stats.get("classification", "PARTIALLY MOLDABLE")
+        
         self.parting_badge_status.setText(classification)
         if classification == "MOLDABLE":
             self.parting_badge_status.setStyleSheet("background-color: #2e7d32; color: white; border-radius: 4px; font-weight: bold;")
@@ -771,7 +1409,7 @@ class DFMMainWindow(QMainWindow):
             self.parting_badge_status.setStyleSheet("background-color: #ff9800; color: white; border-radius: 4px; font-weight: bold;")
         else:
             self.parting_badge_status.setStyleSheet("background-color: #c62828; color: white; border-radius: 4px; font-weight: bold;")
-
+            
         justification = (
             f"The automatically selected Z = {res.optimal_z:.2f} mm split minimizes undercut area ({res.optimal_stats['undercut_area']:.1f} mm²), "
             f"reduces faces requiring geometric splitting ({res.optimal_stats['crossing_faces']}), and produces the most balanced core/cavity separation. "
@@ -779,66 +1417,9 @@ class DFMMainWindow(QMainWindow):
             f"Classification: {classification}."
         )
         self.parting_val_justification.setText(justification)
-
-        # Dynamic calculations for Z = 14.0
-        stats_z14 = self.engine.evaluate_pull_direction_and_split([0, 0, 1], 14.0)
-        total_area = sum(f.area for f in self.engine.part.faces) or 1.0
-        total_faces = len(self.engine.part.faces) or 1.0
-        ratio_z14 = stats_z14["undercut_area"] / total_area
-        cnt_ratio_z14 = stats_z14["undercut_count"] / total_faces
-        cross_ratio_z14 = stats_z14["crossing_faces"] / total_faces
-
-        core_cnt_z14 = stats_z14["core_faces"]
-        cavity_cnt_z14 = stats_z14["cavity_faces"]
-        max_cnt_z14 = max(1.0, max(core_cnt_z14, cavity_cnt_z14))
-        balance_z14 = min(core_cnt_z14, cavity_cnt_z14) / max_cnt_z14
-
-        score_z14 = (
-            0.40 * (100.0 - ratio_z14 * 100.0) +
-            0.25 * (100.0 - cnt_ratio_z14 * 100.0) +
-            0.20 * (100.0 - cross_ratio_z14 * 100.0) +
-            0.15 * (balance_z14 * 100.0)
-        )
-        score_z14 = max(0.0, score_z14)
-
-        self.z14_val_score.setText(f"{score_z14:.2f} / 100")
-        self.z14_val_undercuts.setText(str(stats_z14["undercut_count"]))
-        self.z14_val_undercut_area.setText(f"{stats_z14['undercut_area']:.2f} mm²")
-        self.z14_val_core_faces.setText(str(stats_z14["core_faces"]))
-        self.z14_val_cavity_faces.setText(str(stats_z14["cavity_faces"]))
-        self.z14_val_crossing_faces.setText(str(stats_z14["crossing_faces"]))
-
-        z14_justification = (
-            f"At Z = 14.0 mm, the parting plane sits right below the top cap. "
-            f"Consequently, the cavity block forms only the top cap cosmetic region, forcing the core block "
-            f"to form the entire main body and legs. This traps all bottom-facing features and vertical ribs "
-            f"on the core side, creating mechanical locks ({stats_z14['undercut_count']} undercut faces) "
-            f"and requiring side actions/sliders for other directions."
-        )
-        self.z14_val_justification.setText(z14_justification)
-
-        if stats_z14["undercut_count"] == 0 and stats_z14["crossing_faces"] == 0:
-            classification_z14 = "MOLDABLE"
-        elif ratio_z14 < 0.05 and cross_ratio_z14 < 0.25 and cnt_ratio_z14 < 0.30:
-            classification_z14 = "PARTIALLY MOLDABLE"
-        elif ratio_z14 < 0.12 and cnt_ratio_z14 < 0.40:
-            classification_z14 = "SIDE ACTION REQUIRED"
-        else:
-            classification_z14 = "NOT MOLDABLE"
-
-        self.z14_badge_status.setText(classification_z14)
-        if classification_z14 == "MOLDABLE":
-            self.z14_badge_status.setStyleSheet("background-color: #2e7d32; color: white; border-radius: 4px; font-weight: bold;")
-        elif classification_z14 == "PARTIALLY MOLDABLE":
-            self.z14_badge_status.setStyleSheet("background-color: #f9a825; color: black; border-radius: 4px; font-weight: bold;")
-        elif classification_z14 == "SIDE ACTION REQUIRED":
-            self.z14_badge_status.setStyleSheet("background-color: #ff9800; color: white; border-radius: 4px; font-weight: bold;")
-        else:
-            self.z14_badge_status.setStyleSheet("background-color: #c62828; color: white; border-radius: 4px; font-weight: bold;")
         
-        # Update demo comparison table
+        # 5. Advisor Tab comparison tables and populate demo
         self.update_demo_comparison_table()
-        # Populate initial cases in demo tab
         self.populate_demo_cases()
 
     def on_tab_changed(self, index):
@@ -862,13 +1443,14 @@ class DFMMainWindow(QMainWindow):
         elif index == 1:
             self.render_draft_analysis()
         elif index == 2:
-            self.render_mold_split()
+            self.on_undercut_view_changed(self.undercut_view_combo.currentText())
         elif index == 3:
             self.render_parting_line()
         elif index == 4:
             self.render_exploded_mold()
         elif index == 5:
-            self.render_z_14_view()
+            self.display.DisplayShape(self.engine.part.shape, update=True)
+            self.display.FitAll()
             
         self.display.View.Redraw()
         self.display.Repaint()
@@ -986,70 +1568,85 @@ class DFMMainWindow(QMainWindow):
         if arrow_shape:
             cyan = Quantity_Color(0.0, 1.0, 1.0, Quantity_TOC_RGB)
             self.display.DisplayColoredShape(arrow_shape, cyan, update=False)
-            
-        # 4. Core & Cavity blocks = Semi-transparent red and blue, slightly retracted
-        bx_min = xmin - dx * 0.15
-        bx_max = xmax + dx * 0.15
-        by_min = ymin - dy * 0.15
-        by_max = ymax + dy * 0.15
+
+        d = self.analysis_result.mold_direction
         z_split = self.analysis_result.optimal_z
         
         from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
         from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Cut
         from OCC.Core.gp import gp_Pnt, gp_Vec, gp_Trsf
         from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
-        
-        cavity_box = BRepPrimAPI_MakeBox(
-            gp_Pnt(bx_min, by_min, z_split),
-            gp_Pnt(bx_max, by_max, zmax + dz * 0.3)
-        ).Shape()
-        
-        core_box = BRepPrimAPI_MakeBox(
-            gp_Pnt(bx_min, by_min, zmin - dz * 0.3),
-            gp_Pnt(bx_max, by_max, z_split)
-        ).Shape()
-        
+
+        bx_min = xmin - dx * 0.15
+        bx_max = xmax + dx * 0.15
+        by_min = ymin - dy * 0.15
+        by_max = ymax + dy * 0.15
+        bz_min = zmin - dz * 0.15
+        bz_max = zmax + dz * 0.15
+
+        # Build mold half boxes along the correct pull axis
+        if abs(d[0]) > 0.9:
+            # X-axis pull
+            cavity_box = BRepPrimAPI_MakeBox(gp_Pnt(z_split, by_min, bz_min), gp_Pnt(bx_max, by_max, bz_max)).Shape()
+            core_box   = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, by_min, bz_min), gp_Pnt(z_split, by_max, bz_max)).Shape()
+        elif abs(d[1]) > 0.9:
+            # Y-axis pull
+            cavity_box = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, z_split, bz_min), gp_Pnt(bx_max, by_max, bz_max)).Shape()
+            core_box   = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, by_min, bz_min), gp_Pnt(bx_max, z_split, bz_max)).Shape()
+        else:
+            # Z-axis pull (default)
+            cavity_box = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, by_min, z_split), gp_Pnt(bx_max, by_max, bz_max)).Shape()
+            core_box   = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, by_min, bz_min), gp_Pnt(bx_max, by_max, z_split)).Shape()
+
         try:
             cavity_cut = BRepAlgoAPI_Cut(cavity_box, self.engine.part.shape).Shape()
-            core_cut = BRepAlgoAPI_Cut(core_box, self.engine.part.shape).Shape()
+            core_cut   = BRepAlgoAPI_Cut(core_box,   self.engine.part.shape).Shape()
         except Exception as e:
-            print("Boolean cut failed, falling back to blank blocks:", e)
+            print("Boolean cut failed, using blank blocks:", e)
             cavity_cut = cavity_box
-            core_cut = core_box
-            
-        if cavity_cut is None or cavity_cut.IsNull():
-            cavity_cut = cavity_box
-        if core_cut is None or core_cut.IsNull():
-            core_cut = core_box
-            
-        # Retract slightly for visual spacing
-        trans_z = dz * 0.4
-        
+            core_cut   = core_box
+
+        if cavity_cut is None or cavity_cut.IsNull(): cavity_cut = cavity_box
+        if core_cut   is None or core_cut.IsNull():   core_cut   = core_box
+
+        # Separation driven by slider
+        sep = getattr(self, 'parting_separation', 0.8)
+        if abs(d[0]) > 0.9:
+            span = dx
+            trans_vec_cav = gp_Vec( span * sep, 0, 0)
+            trans_vec_cor = gp_Vec(-span * sep, 0, 0)
+        elif abs(d[1]) > 0.9:
+            span = dy
+            trans_vec_cav = gp_Vec(0,  span * sep, 0)
+            trans_vec_cor = gp_Vec(0, -span * sep, 0)
+        else:
+            span = dz
+            trans_vec_cav = gp_Vec(0, 0,  span * sep)
+            trans_vec_cor = gp_Vec(0, 0, -span * sep)
+
         trsf_cavity = gp_Trsf()
-        trsf_cavity.SetTranslation(gp_Vec(0, 0, trans_z))
+        trsf_cavity.SetTranslation(trans_vec_cav)
         cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True, False).Shape()
-        
+
         trsf_core = gp_Trsf()
-        trsf_core.SetTranslation(gp_Vec(0, 0, -trans_z))
+        trsf_core.SetTranslation(trans_vec_cor)
         core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True, False).Shape()
-        
+
         cavity_color = Quantity_Color(0.9, 0.2, 0.2, Quantity_TOC_RGB)
         ais_cavity = self.display.DisplayColoredShape(cavity_exploded, cavity_color, update=False)
         for ais_c in (ais_cavity if isinstance(ais_cavity, list) else [ais_cavity]):
             ais_c.SetTransparency(0.7)
-            
+
         core_color = Quantity_Color(0.2, 0.4, 0.9, Quantity_TOC_RGB)
         ais_core = self.display.DisplayColoredShape(core_exploded, core_color, update=False)
         for ais_co in (ais_core if isinstance(ais_core, list) else [ais_core]):
             ais_co.SetTransparency(0.7)
-            
+
         print("render_parting_line completed", flush=True)
 
-    def setup_exploded_tab(self):
+    def setup_advisor_tab(self):
         # 1. Main layout for the tab
-        layout = QVBoxLayout(self.exploded_tab)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        scroll_layout = self.create_scrollable_layout(self.advisor_tab)
         
         # 2. Top panel containing selection controls
         panel = QFrame()
@@ -1079,7 +1676,7 @@ class DFMMainWindow(QMainWindow):
         panel_layout.addWidget(case_lbl)
         panel_layout.addWidget(self.demo_case_combo)
         
-        layout.addWidget(panel)
+        scroll_layout.addWidget(panel)
         
         # 3. Advisor panel showing score and badges
         advisor_panel = QFrame()
@@ -1123,13 +1720,13 @@ class DFMMainWindow(QMainWindow):
         self.demo_val_reason.setWordWrap(True)
         self.demo_val_reason.setStyleSheet("color: #dfdfea; font-size: 11px; padding: 4px; background-color: #181825; border-radius: 4px;")
         adv_layout.addWidget(self.demo_val_reason)
-
+ 
         # Future Roadmap footnote
         roadmap_lbl = QLabel("Roadmap: Simultaneous Multi-Axis + Split Surface Optimization")
         roadmap_lbl.setStyleSheet("color: #7f7f8f; font-size: 10px; font-style: italic; margin-top: 5px;")
         adv_layout.addWidget(roadmap_lbl)
         
-        layout.addWidget(advisor_panel)
+        scroll_layout.addWidget(advisor_panel)
         
         # 4. Comparison Table Panel
         comp_panel = QFrame()
@@ -1145,192 +1742,68 @@ class DFMMainWindow(QMainWindow):
         self.demo_comp_table.setStyleSheet("font-family: 'Segoe UI', monospace; font-size: 11px;")
         comp_layout.addWidget(self.demo_comp_table)
         
-        layout.addWidget(comp_panel)
+        scroll_layout.addWidget(comp_panel)
         
-        layout.addStretch()
-
+        scroll_layout.addStretch()
+ 
     def render_exploded_mold(self):
         print("render_exploded_mold starting", flush=True)
         self.on_demo_case_changed(self.demo_case_combo.currentText())
 
-    def setup_z_14_tab(self):
-        layout = QVBoxLayout(self.z_14_tab)
-        layout.setContentsMargins(15, 15, 15, 15)
+    def setup_reports_tab(self):
+        scroll_layout = self.create_scrollable_layout(self.reports_tab)
         
         panel = QFrame()
         panel.setProperty("class", "panel")
         panel_layout = QVBoxLayout(panel)
         
-        title = QLabel("Z = 14.0 Moldability Analysis")
+        title = QLabel("Manufacturing Report Center")
         title.setProperty("class", "section-title")
         panel_layout.addWidget(title)
         
-        # Badge layout
-        badge_layout = QHBoxLayout()
-        self.z14_badge_status = QLabel("PARTIALLY MOLDABLE")
-        self.z14_badge_status.setAlignment(Qt.AlignCenter)
-        self.z14_badge_status.setFixedHeight(30)
-        self.z14_badge_status.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.z14_badge_status.setStyleSheet("background-color: #f9a825; color: black; border-radius: 4px; font-weight: bold;")
-        badge_layout.addWidget(self.z14_badge_status)
-        panel_layout.addLayout(badge_layout)
+        desc = QLabel("Generate and download DfM evaluation reports for downstream CAD, tooling design, and manufacturing reviews.")
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #a0a0c0; font-size: 12px; margin-bottom: 15px;")
+        panel_layout.addWidget(desc)
         
-        # Explanation text block
-        exp_lbl = QLabel("Engineering Justification:")
-        exp_lbl.setProperty("class", "lbl-text")
-        exp_lbl.setStyleSheet("font-weight: bold; margin-top: 5px;")
-        panel_layout.addWidget(exp_lbl)
+        # PDF Report Option
+        pdf_group = QGroupBox("PDF Engineering Report")
+        pdf_group.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3d3d5c; border-radius: 6px; margin-top: 10px; padding-top: 15px; color: #e20015; }")
+        pdf_layout = QVBoxLayout(pdf_group)
+        pdf_layout.setContentsMargins(10, 10, 10, 10)
         
-        self.z14_val_justification = QLabel("-")
-        self.z14_val_justification.setWordWrap(True)
-        self.z14_val_justification.setStyleSheet("color: #dfdfea; font-size: 11px; padding: 4px; background-color: #181825; border-radius: 4px;")
-        panel_layout.addWidget(self.z14_val_justification)
+        pdf_desc = QLabel("Includes 3D images, optimized pull vector direction, moldability scorecards, and a detailed list of draft/undercut violations.")
+        pdf_desc.setWordWrap(True)
+        pdf_desc.setStyleSheet("color: #dfdfea; font-size: 11px; margin-bottom: 8px;")
+        pdf_layout.addWidget(pdf_desc)
         
-        title_metrics = QLabel("Z = 14.0 Metrics")
-        title_metrics.setProperty("class", "section-title")
-        panel_layout.addWidget(title_metrics)
+        self.btn_export_pdf = QPushButton("Export PDF Report")
+        self.btn_export_pdf.setEnabled(False)
+        self.btn_export_pdf.clicked.connect(self.on_export_pdf)
+        pdf_layout.addWidget(self.btn_export_pdf)
         
-        _, self.z14_val_score = self.create_stat_row(panel_layout, "Moldability Score:")
-        _, self.z14_val_undercuts = self.create_stat_row(panel_layout, "Undercut Faces:")
-        _, self.z14_val_undercut_area = self.create_stat_row(panel_layout, "Undercut Area:")
-        _, self.z14_val_core_faces = self.create_stat_row(panel_layout, "Core Faces:")
-        _, self.z14_val_cavity_faces = self.create_stat_row(panel_layout, "Cavity Faces:")
-        _, self.z14_val_crossing_faces = self.create_stat_row(panel_layout, "Crossing Faces:")
+        panel_layout.addWidget(pdf_group)
         
-        title_legend = QLabel("Legend")
-        title_legend.setProperty("class", "section-title")
-        panel_layout.addWidget(title_legend)
-        panel_layout.addWidget(self.create_legend_row("#CCFF00", "Top Parting Line Wires"))
-        panel_layout.addWidget(self.create_legend_row("#00FFFF", "Parting Plane Sheet (Z = 14.0)"))
-        panel_layout.addWidget(self.create_legend_row("#E20015", "Cavity Block (Exploded Upwards)"))
-        panel_layout.addWidget(self.create_legend_row("#004CFF", "Core Block (Exploded Downwards)"))
+        # JSON Report Option
+        json_group = QGroupBox("JSON Dataset")
+        json_group.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3d3d5c; border-radius: 6px; margin-top: 15px; padding-top: 15px; color: #e20015; }")
+        json_layout = QVBoxLayout(json_group)
+        json_layout.setContentsMargins(10, 10, 10, 10)
+        
+        json_desc = QLabel("Exports raw geometric metadata, optimization scores, and face classifications for downstream database logging or CAD plug-ins.")
+        json_desc.setWordWrap(True)
+        json_desc.setStyleSheet("color: #dfdfea; font-size: 11px; margin-bottom: 8px;")
+        json_layout.addWidget(json_desc)
+        
+        self.btn_export_json = QPushButton("Export JSON Data")
+        self.btn_export_json.setEnabled(False)
+        self.btn_export_json.clicked.connect(self.on_export_json)
+        json_layout.addWidget(self.btn_export_json)
+        
+        panel_layout.addWidget(json_group)
         
         panel_layout.addStretch()
-        layout.addWidget(panel)
-
-    def render_z_14_view(self):
-        print("render_z_14_view starting", flush=True)
-        if not self.engine or not self.engine.part or not self.analysis_result:
-            return
-            
-        self.display.EraseAll()
-        self.display.SetSelectionModeFace()
-        
-        # 1. Bounding Box
-        bbox = Bnd_Box()
-        brepbndlib.Add(self.engine.part.shape, bbox)
-        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
-        dx = xmax - xmin
-        dy = ymax - ymin
-        dz = zmax - zmin
-        
-        # 2. Part = Semi-Transparent Gray
-        color = Quantity_Color(0.85, 0.85, 0.85, Quantity_TOC_RGB)
-        ais_shape_list = self.display.DisplayShape(self.engine.part.shape, update=False)
-        for ais_shape in ais_shape_list:
-            ais_shape.SetColor(color)
-            ais_shape.SetTransparency(0.7)
-            
-        # 3. Parting Line Wires at Z = 14.0 using BRepAlgoAPI_Section
-        from OCC.Core.gp import gp_Pln, gp_Pnt, gp_Dir
-        from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Section
-        from OCC.Core.TopExp import TopExp_Explorer
-        from OCC.Core.TopAbs import TopAbs_EDGE
-        from OCC.Core.TopoDS import topods
-        
-        pln = gp_Pln(gp_Pnt(0, 0, 14.0), gp_Dir(0, 0, 1))
-        section = BRepAlgoAPI_Section(self.engine.part.shape, pln, True)
-        section.Build()
-        
-        sec_explorer = TopExp_Explorer(section.Shape(), TopAbs_EDGE)
-        yellow_green = Quantity_Color(0.8, 1.0, 0.0, Quantity_TOC_RGB)
-        aspect = Prs3d_LineAspect(yellow_green, Aspect_TOL_SOLID, 4.0)
-        while sec_explorer.More():
-            edge = topods.Edge(sec_explorer.Current())
-            ais_edges = self.display.DisplayShape(edge, update=False)
-            for ais_edge in ais_edges:
-                ais_edge.Attributes().SetLineAspect(aspect)
-                ais_edge.Attributes().SetWireAspect(aspect)
-                ais_edge.Attributes().SetFreeBoundaryAspect(aspect)
-                ais_edge.Attributes().SetUnFreeBoundaryAspect(aspect)
-                self.display.Context.Redisplay(ais_edge, False)
-            sec_explorer.Next()
-                
-        # 4. Parting Sheet at Z = 14.0
-        bx_min = xmin - dx * 0.15
-        bx_max = xmax + dx * 0.15
-        by_min = ymin - dy * 0.15
-        by_max = ymax + dy * 0.15
-        margin = dx * 0.08
-        
-        from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
-        parting_sheet = BRepPrimAPI_MakeBox(
-            gp_Pnt(bx_min - margin, by_min - margin, 14.0 - 0.15),
-            gp_Pnt(bx_max + margin, by_max + margin, 14.0 + 0.15)
-        ).Shape()
-        
-        cyan = Quantity_Color(0.0, 1.0, 1.0, Quantity_TOC_RGB)
-        ais_sheet = self.display.DisplayColoredShape(parting_sheet, cyan, update=False)
-        for ais_sh in (ais_sheet if isinstance(ais_sheet, list) else [ais_sheet]):
-            ais_sh.SetTransparency(0.7)
-            
-        # 5. Exploded Core & Cavity blocks at Z = 14.0
-        from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Cut
-        from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
-        from OCC.Core.gp import gp_Trsf, gp_Vec
-        
-        cavity_box = BRepPrimAPI_MakeBox(
-            gp_Pnt(bx_min, by_min, 14.0),
-            gp_Pnt(bx_max, by_max, zmax + dz * 0.3)
-        ).Shape()
-        
-        core_box = BRepPrimAPI_MakeBox(
-            gp_Pnt(bx_min, by_min, zmin - dz * 0.3),
-            gp_Pnt(bx_max, by_max, 14.0)
-        ).Shape()
-        
-        try:
-            cavity_cut = BRepAlgoAPI_Cut(cavity_box, self.engine.part.shape).Shape()
-            core_cut = BRepAlgoAPI_Cut(core_box, self.engine.part.shape).Shape()
-        except Exception as e:
-            print("Boolean cut failed, falling back to blank blocks:", e)
-            cavity_cut = cavity_box
-            core_cut = core_box
-            
-        if cavity_cut is None or cavity_cut.IsNull():
-            cavity_cut = cavity_box
-        if core_cut is None or core_cut.IsNull():
-            core_cut = core_box
-            
-        trans_z = dz * 0.4
-        
-        trsf_cavity = gp_Trsf()
-        trsf_cavity.SetTranslation(gp_Vec(0, 0, trans_z))
-        cavity_exploded = BRepBuilderAPI_Transform(cavity_cut, trsf_cavity, True, False).Shape()
-        
-        trsf_core = gp_Trsf()
-        trsf_core.SetTranslation(gp_Vec(0, 0, -trans_z))
-        core_exploded = BRepBuilderAPI_Transform(core_cut, trsf_core, True, False).Shape()
-        
-        cavity_color = Quantity_Color(0.9, 0.2, 0.2, Quantity_TOC_RGB)
-        ais_cavity = self.display.DisplayColoredShape(cavity_exploded, cavity_color, update=False)
-        for ais_c in (ais_cavity if isinstance(ais_cavity, list) else [ais_cavity]):
-            ais_c.SetTransparency(0.7)
-            
-        core_color = Quantity_Color(0.2, 0.4, 0.9, Quantity_TOC_RGB)
-        ais_core = self.display.DisplayColoredShape(core_exploded, core_color, update=False)
-        for ais_co in (ais_core if isinstance(ais_core, list) else [ais_core]):
-            ais_co.SetTransparency(0.7)
-            
-        # 6. Direction Arrow
-        cx = (xmin + xmax) / 2.0
-        cy = (ymin + ymax) / 2.0
-        cz = (zmin + zmax) / 2.0
-        arrow_shape = self.create_arrow([cx, cy, cz], [0, 0, 1], dz * 0.4)
-        if arrow_shape:
-            self.display.DisplayColoredShape(arrow_shape, cyan, update=False)
-            
-        print("render_z_14_view completed", flush=True)
+        scroll_layout.addWidget(panel)
 
     def on_demo_mode_changed(self, text):
         self.populate_demo_cases()
