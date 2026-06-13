@@ -412,72 +412,229 @@ class DFMEngine:
         if callback: callback("Generating Parting Line...")
         z_split, optimal_stats, standard_positions = self.scan_parting_planes()
         
-        from OCC.Core.Bnd import Bnd_Box
-        from OCC.Core.BRepBndLib import brepbndlib
-        bbox = Bnd_Box()
-        brepbndlib.Add(self.part.shape, bbox)
-        bbox_vals = bbox.Get()
-        xmin, ymin, zmin, xmax, ymax, zmax = bbox_vals
+        # [LEGACY] Plane-intersection parting line detection — kept as fallback
+        # Replaced by silhouette-edge detection below
+        # from OCC.Core.Bnd import Bnd_Box
+        # from OCC.Core.BRepBndLib import brepbndlib
+        # bbox = Bnd_Box()
+        # brepbndlib.Add(self.part.shape, bbox)
+        # bbox_vals = bbox.Get()
+        # xmin, ymin, zmin, xmax, ymax, zmax = bbox_vals
+        # 
+        # from OCC.Core.gp import gp_Pln, gp_Pnt, gp_Dir
+        # 
+        # # Determine the best axis from self.best_direction
+        # d = np.array(self.best_direction, dtype=float)
+        # axis_name = "Z"
+        # dir_vector = gp_Dir(0, 0, 1)
+        # pnt_origin = gp_Pnt(0, 0, z_split)
+        # if abs(d[0]) > 0.9:
+        #     axis_name = "X"
+        #     dir_vector = gp_Dir(1, 0, 0)
+        #     pnt_origin = gp_Pnt(z_split, 0, 0)
+        # elif abs(d[1]) > 0.9:
+        #     axis_name = "Y"
+        #     dir_vector = gp_Dir(0, 1, 0)
+        #     pnt_origin = gp_Pnt(0, z_split, 0)
+        #     
+        # # Intersect the part shape with the split plane
+        # from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Section
+        # from OCC.Core.TopExp import TopExp_Explorer
+        # from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_VERTEX
+        # from OCC.Core.TopoDS import topods
+        # from OCC.Core.BRep import BRep_Tool
+        # import math
+        # 
+        # pln = gp_Pln(pnt_origin, dir_vector)
+        # section = BRepAlgoAPI_Section(self.part.shape, pln, True)
+        # section.Build()
+        # 
+        # sec_explorer = TopExp_Explorer(section.Shape(), TopAbs_EDGE)
+        # section_edges = []
+        # while sec_explorer.More():
+        #     section_edges.append(topods.Edge(sec_explorer.Current()))
+        #     sec_explorer.Next()
+        #     
+        # # Calculate maximum radius to set dynamic thresholds relative to part bounding box center
+        # cx = (bbox_vals[0] + bbox_vals[3]) / 2.0
+        # cy = (bbox_vals[1] + bbox_vals[4]) / 2.0
+        # cz = (bbox_vals[2] + bbox_vals[5]) / 2.0
+        # 
+        # def get_edge_radius(edge):
+        #     try:
+        #         from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+        #         adaptor = BRepAdaptor_Curve(edge)
+        #         t_mid = (adaptor.FirstParameter() + adaptor.LastParameter()) / 2.0
+        #         pt = adaptor.Value(t_mid)
+        #         mx, my, mz = pt.X(), pt.Y(), pt.Z()
+        #         if axis_name == "X":
+        #             return math.sqrt((my - cy)**2 + (mz - cz)**2)
+        #         elif axis_name == "Y":
+        #             return math.sqrt((mx - cx)**2 + (mz - cz)**2)
+        #         else:
+        #             return math.sqrt((mx - cx)**2 + (my - cy)**2)
+        #     except Exception:
+        #         return 0.0
+        #     
+        # # Compute maximum edge radius from center
+        # edge_radii = [get_edge_radius(e) for e in section_edges]
+        # max_r = max(edge_radii) if edge_radii else 1.0
 
-        from OCC.Core.gp import gp_Pln, gp_Pnt, gp_Dir
-
-        # Determine the best axis from self.best_direction
-        d = np.array(self.best_direction, dtype=float)
-        axis_name = "Z"
-        dir_vector = gp_Dir(0, 0, 1)
-        pnt_origin = gp_Pnt(0, 0, z_split)
-        if abs(d[0]) > 0.9:
-            axis_name = "X"
-            dir_vector = gp_Dir(1, 0, 0)
-            pnt_origin = gp_Pnt(z_split, 0, 0)
-        elif abs(d[1]) > 0.9:
-            axis_name = "Y"
-            dir_vector = gp_Dir(0, 1, 0)
-            pnt_origin = gp_Pnt(0, z_split, 0)
-            
-        # Intersect the part shape with the split plane
-        from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Section
-        from OCC.Core.TopExp import TopExp_Explorer
-        from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_VERTEX
+        # [NEW] Silhouette-Edge Parting Line Detection
+        # Parting line edges are defined as edges shared by at least one CAVITY face
+        # and at least one CORE face, relative to the optimal pull direction.
+        # This follows the physical definition of a parting line in injection molding.
+        # Replaces the flat plane-intersection approach which caused mid-body splits.
+        import math
+        from OCC.Core.gp import gp_Dir
+        from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_ListIteratorOfListOfShape
+        from OCC.Core.TopExp import topexp
+        from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED
         from OCC.Core.TopoDS import topods
         from OCC.Core.BRep import BRep_Tool
-        import math
-        
-        pln = gp_Pln(pnt_origin, dir_vector)
-        section = BRepAlgoAPI_Section(self.part.shape, pln, True)
-        section.Build()
-        
-        sec_explorer = TopExp_Explorer(section.Shape(), TopAbs_EDGE)
-        section_edges = []
-        while sec_explorer.More():
-            section_edges.append(topods.Edge(sec_explorer.Current()))
-            sec_explorer.Next()
+        from OCC.Core.BRepTools import breptools
+        from OCC.Core.GeomLProp import GeomLProp_SLProps
+
+        pull_dir = self.best_direction
+        pull_gp = gp_Dir(float(pull_dir[0]), float(pull_dir[1]), float(pull_dir[2]))
+
+        face_normal_cache = {}
+
+        def get_face_normal(face):
+            h = face.HashCode(20000000)
+            if h in face_normal_cache:
+                for f, n in face_normal_cache[h]:
+                    if f.IsSame(face):
+                        return n
             
-        # Calculate maximum radius to set dynamic thresholds relative to part bounding box center
-        cx = (bbox_vals[0] + bbox_vals[3]) / 2.0
-        cy = (bbox_vals[1] + bbox_vals[4]) / 2.0
-        cz = (bbox_vals[2] + bbox_vals[5]) / 2.0
-        
-        def get_edge_radius(edge):
+            normal_dir = None
+            try:
+                surface = BRep_Tool.Surface(face)
+                u_min, u_max, v_min, v_max = breptools.UVBounds(face)
+                u_mid = (u_min + u_max) / 2.0
+                v_mid = (v_min + v_max) / 2.0
+                
+                props = GeomLProp_SLProps(surface, u_mid, v_mid, 1, 1e-6)
+                if props.IsNormalDefined():
+                    n = props.Normal()
+                    nx, ny, nz = n.X(), n.Y(), n.Z()
+                    norm_val = math.sqrt(nx*nx + ny*ny + nz*nz)
+                    if norm_val > 1e-6:
+                        if face.Orientation() == TopAbs_REVERSED:
+                            nx, ny, nz = -nx, -ny, -nz
+                        normal_dir = gp_Dir(nx, ny, nz)
+            except Exception:
+                normal_dir = None
+                
+            if h not in face_normal_cache:
+                face_normal_cache[h] = []
+            face_normal_cache[h].append((face, normal_dir))
+            return normal_dir
+
+        def classify_face(face, pull_gp):
+            normal = get_face_normal(face)
+            if normal is None:
+                return "CAVITY"
+            dot = normal.Dot(pull_gp)
+            if dot >= 0.0:
+                return "CAVITY"
+            else:
+                return "CORE"
+
+        edge_face_map = TopTools_IndexedDataMapOfShapeListOfShape()
+        topexp.MapShapesAndAncestors(self.part.shape, TopAbs_EDGE, TopAbs_FACE, edge_face_map)
+
+        # Pre-classify all faces for performance
+        from OCC.Core.TopExp import TopExp_Explorer
+        face_explorer = TopExp_Explorer(self.part.shape, TopAbs_FACE)
+        face_class_map = {}
+        while face_explorer.More():
+            f = topods.Face(face_explorer.Current())
+            cls = classify_face(f, pull_gp)
+            h = f.HashCode(20000000)
+            if h not in face_class_map:
+                face_class_map[h] = []
+            face_class_map[h].append((f, cls))
+            face_explorer.Next()
+
+        parting_edges = []
+        for i in range(1, edge_face_map.Size() + 1):
+            edge = topods.Edge(edge_face_map.FindKey(i))
+            faces_list = edge_face_map.FindFromIndex(i)
+            
+            adjacent_faces = []
+            it = TopTools_ListIteratorOfListOfShape(faces_list)
+            while it.More():
+                adjacent_faces.append(topods.Face(it.Value()))
+                it.Next()
+                
+            classifications = []
+            for f in adjacent_faces:
+                h = f.HashCode(20000000)
+                cls = "SIDE"
+                if h in face_class_map:
+                    for cached_f, cached_cls in face_class_map[h]:
+                        if cached_f.IsSame(f):
+                            cls = cached_cls
+                            break
+                classifications.append(cls)
+            
+            if "CAVITY" in classifications and "CORE" in classifications:
+                parting_edges.append(edge)
+
+        # Determine axis index from best axis
+        if best_axis == "X":
+            axis_idx = 0
+        elif best_axis == "Y":
+            axis_idx = 1
+        else:
+            axis_idx = 2
+
+        # Height band: keep edges within ±15% of part height around the correct split height
+        from OCC.Core.Bnd import Bnd_Box
+        from OCC.Core.BRepBndLib import brepbndlib
+        part_bbox = Bnd_Box()
+        brepbndlib.Add(self.part.shape, part_bbox)
+        b = part_bbox.Get()
+        part_height = b[axis_idx + 3] - b[axis_idx]
+
+        # Pick the correct split value based on best axis
+        if best_axis == "X":
+            active_split = x_split
+        elif best_axis == "Y":
+            active_split = y_split
+        else:
+            active_split = z_split
+
+        band = 0.15 * part_height
+
+        def is_edge_within_band(edge, split_val, band_val, axis_index):
             try:
                 from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
                 adaptor = BRepAdaptor_Curve(edge)
-                t_mid = (adaptor.FirstParameter() + adaptor.LastParameter()) / 2.0
-                pt = adaptor.Value(t_mid)
-                mx, my, mz = pt.X(), pt.Y(), pt.Z()
-                if axis_name == "X":
-                    return math.sqrt((my - cy)**2 + (mz - cz)**2)
-                elif axis_name == "Y":
-                    return math.sqrt((mx - cx)**2 + (mz - cz)**2)
-                else:
-                    return math.sqrt((mx - cx)**2 + (my - cy)**2)
+                t1, t2 = adaptor.FirstParameter(), adaptor.LastParameter()
+                p1 = adaptor.Value(t1)
+                p2 = adaptor.Value(t2)
+                pt_mid = adaptor.Value((t1 + t2) / 2.0)
+                
+                h1 = [p1.X(), p1.Y(), p1.Z()][axis_index]
+                h2 = [p2.X(), p2.Y(), p2.Z()][axis_index]
+                hm = [pt_mid.X(), pt_mid.Y(), pt_mid.Z()][axis_index]
+                
+                return (abs(h1 - split_val) <= band_val and 
+                        abs(h2 - split_val) <= band_val and 
+                        abs(hm - split_val) <= band_val)
             except Exception:
-                return 0.0
-            
-        # Compute maximum edge radius from center
-        edge_radii = [get_edge_radius(e) for e in section_edges]
-        max_r = max(edge_radii) if edge_radii else 1.0
-        
+                return False
+
+        filtered_parting_edges = []
+        for edge in parting_edges:
+            if is_edge_within_band(edge, active_split, band, axis_idx):
+                filtered_parting_edges.append(edge)
+
+        parting_edges = filtered_parting_edges
+
+
         def build_loops_for_edges(edge_list, tol_val):
             from OCC.Core.BRep import BRep_Tool
             from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
@@ -552,46 +709,73 @@ class DFMEngine:
                 })
             return loops_out
 
-        # ----------------------------------------------------------------
-        # For the parting LINE we want the widest silhouette cross-section,
-        # which is the geometric centroid midplane (perpendicular to pull).
-        # The optimal mold-split plane (z_split) may be off-center, but the
-        # parting LINE definition is the part boundary at that midplane.
-        # Re-section at the midplane for a better parting line display.
-        # The mold split value (z_split) is still used for mold visualization.
-        # ----------------------------------------------------------------
-        if axis_name == "X":
-            midplane_val = (xmin + xmax) / 2.0
-            mid_pnt_origin = gp_Pnt(midplane_val, 0, 0)
-        elif axis_name == "Y":
-            midplane_val = (ymin + ymax) / 2.0
-            mid_pnt_origin = gp_Pnt(0, midplane_val, 0)
-        else:
-            midplane_val = (zmin + zmax) / 2.0
-            mid_pnt_origin = gp_Pnt(0, 0, midplane_val)
 
-        # Always re-section at the midplane
-        mid_pln = gp_Pln(mid_pnt_origin, dir_vector)
-        mid_section = BRepAlgoAPI_Section(self.part.shape, mid_pln, True)
-        mid_section.Build()
-        mid_explorer = TopExp_Explorer(mid_section.Shape(), TopAbs_EDGE)
-        section_edges = []
-        while mid_explorer.More():
-            section_edges.append(topods.Edge(mid_explorer.Current()))
-            mid_explorer.Next()
-        
-        edge_radii = [get_edge_radius(e) for e in section_edges]
-        max_r = max(edge_radii) if edge_radii else 1.0
+        # Trace parting edges into closed loops with a tolerance value (LOOP_TOL)
+        LOOP_TOL = 20.0
+        all_loops = build_loops_for_edges(parting_edges, LOOP_TOL)
 
-        # Use generous tolerance so slightly-gapped section edges still close
-        # 6.0mm covers corner gaps in complex parts (Part1 has ~5mm corner gaps)
-        LOOP_TOL = 6.0
+        # [LEGACY] Plane-intersection parting line processing (commented out)
+        # # ----------------------------------------------------------------
+        # # For the parting LINE we want the widest silhouette cross-section,
+        # # which is the geometric centroid midplane (perpendicular to pull).
+        # # The optimal mold-split plane (z_split) may be off-center, but the
+        # # parting LINE definition is the part boundary at that midplane.
+        # # Re-section at the midplane for a better parting line display.
+        # # The mold split value (z_split) is still used for mold visualization.
+        # # ----------------------------------------------------------------
+        # if axis_name == "X":
+        #     midplane_val = (xmin + xmax) / 2.0
+        #     mid_pnt_origin = gp_Pnt(midplane_val, 0, 0)
+        # elif axis_name == "Y":
+        #     midplane_val = (ymin + ymax) / 2.0
+        #     mid_pnt_origin = gp_Pnt(0, midplane_val, 0)
+        # else:
+        #     midplane_val = (zmin + zmax) / 2.0
+        #     mid_pnt_origin = gp_Pnt(0, 0, midplane_val)
+        # 
+        # # Always re-section at the midplane
+        # mid_pln = gp_Pln(mid_pnt_origin, dir_vector)
+        # mid_section = BRepAlgoAPI_Section(self.part.shape, mid_pln, True)
+        # mid_section.Build()
+        # mid_explorer = TopExp_Explorer(mid_section.Shape(), TopAbs_EDGE)
+        # section_edges = []
+        # while mid_explorer.More():
+        #     section_edges.append(topods.Edge(mid_explorer.Current()))
+        #     mid_explorer.Next()
+        # 
+        # edge_radii = [get_edge_radius(e) for e in section_edges]
+        # max_r = max(edge_radii) if edge_radii else 1.0
+        # 
+        # # Use generous tolerance so slightly-gapped section edges still close
+        # # 6.0mm covers corner gaps in complex parts (Part1 has ~5mm corner gaps)
+        # LOOP_TOL = 6.0
+        # 
+        # all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
+        # loops = [l for l in all_loops if l['is_closed']]
+        # 
+        # 
+        # # Package raw edges for the result object
+        # shared_edges = []
+        # for l in loops:
+        #     for e in l['edges']:
+        #         shared_edges.append({
+        #             "face_a": -1,
+        #             "face_b": -1,
+        #             "edge": e
+        #         })
+        # 
+        # 
+        # total_parting_length = 0.0
+        # for loop in loops:
+        #     for edge in loop["edges"]:
+        #         total_parting_length += self._get_edge_length(edge)
+        #         
+        # is_closed_loop = all(loop["is_closed"] for loop in loops) if loops else False
 
-        all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
+        # [NEW] Silhouette-Edge Parting Line Processing
         loops = [l for l in all_loops if l['is_closed']]
 
-        
-        # Package raw edges for the result object
+
         shared_edges = []
         for l in loops:
             for e in l['edges']:
@@ -601,12 +785,11 @@ class DFMEngine:
                     "edge": e
                 })
 
-        
         total_parting_length = 0.0
         for loop in loops:
             for edge in loop["edges"]:
                 total_parting_length += self._get_edge_length(edge)
-                
+
         is_closed_loop = all(loop["is_closed"] for loop in loops) if loops else False
         
         # DfM Score calculation: 100 - 2 * undercut_count - 1 * draft_violation_count
