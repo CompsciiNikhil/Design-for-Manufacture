@@ -582,8 +582,42 @@ class DFMEngine:
             if "CAVITY" in classifications and "CORE" in classifications:
                 parting_edges.append(edge)
 
+        # Axis setup
+        if best_axis == "X":
+            axis_idx = 0
+            active_split = x_split
+        elif best_axis == "Y":
+            axis_idx = 1
+            active_split = y_split
+        else:
+            axis_idx = 2
+            active_split = z_split
 
+        from OCC.Core.Bnd import Bnd_Box
+        from OCC.Core.BRepBndLib import brepbndlib
+        _fbbox = Bnd_Box()
+        brepbndlib.Add(self.part.shape, _fbbox)
+        _fb = _fbbox.Get()
+        _part_span = _fb[axis_idx + 3] - _fb[axis_idx]
 
+        # Use 20% band — wider than before to capture outer silhouette
+        _band = 0.20 * _part_span
+
+        def get_edge_mid_coord(edge, ax):
+            try:
+                from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+                a = BRepAdaptor_Curve(edge)
+                t = (a.FirstParameter() + a.LastParameter()) / 2.0
+                pt = a.Value(t)
+                return [pt.X(), pt.Y(), pt.Z()][ax]
+            except Exception:
+                return None
+
+        parting_edges = [
+            e for e in parting_edges
+            if (c := get_edge_mid_coord(e, axis_idx)) is not None
+            and abs(c - active_split) <= _band
+        ]
 
         def build_loops_for_edges(edge_list, tol_val):
             from OCC.Core.BRep import BRep_Tool
@@ -661,7 +695,22 @@ class DFMEngine:
 
 
         # Trace parting edges into closed loops with a tolerance value (LOOP_TOL)
-        LOOP_TOL = 20.0
+        # Dynamic tolerance: 1% of the smallest bounding box dimension
+        # This prevents bridging gaps between unrelated features
+        from OCC.Core.Bnd import Bnd_Box
+        from OCC.Core.BRepBndLib import brepbndlib
+        _tol_bbox = Bnd_Box()
+        brepbndlib.Add(self.part.shape, _tol_bbox)
+        _tb = _tol_bbox.Get()
+        _dims = [
+            _tb[3] - _tb[0],  # X span
+            _tb[4] - _tb[1],  # Y span
+            _tb[5] - _tb[2],  # Z span
+        ]
+        _min_dim = min(d for d in _dims if d > 0)
+        LOOP_TOL = max(0.1, _min_dim * 0.01)
+        # Cap at 1.0mm — enough to close genuine gaps, not bridge features
+        LOOP_TOL = min(LOOP_TOL, 1.0)
         all_loops = build_loops_for_edges(parting_edges, LOOP_TOL)
 
         # [LEGACY] Plane-intersection parting line processing (commented out)
@@ -724,25 +773,14 @@ class DFMEngine:
 
         # [NEW] Silhouette-Edge Parting Line Processing
         closed_loops = [l for l in all_loops if l['is_closed']]
-        
-        if not closed_loops:
-            loops = []
+        if closed_loops:
+            # Keep only loops longer than 10% of the longest
+            def _ll(loop):
+                return sum(self._get_edge_length(e) for e in loop['edges'])
+            max_len = max(_ll(l) for l in closed_loops)
+            loops = [l for l in closed_loops if _ll(l) >= 0.10 * max_len]
         else:
-            # Compute length of each loop
-            def loop_length(loop):
-                total = 0.0
-                for edge in loop['edges']:
-                    total += self._get_edge_length(edge)
-                return total
-            
-            # Find the longest loop — this is always the outer perimeter
-            longest = max(closed_loops, key=loop_length)
-            longest_len = loop_length(longest)
-            
-            # Keep loops whose length is at least 15% of the longest loop
-            # This keeps meaningful outer loops and discards tiny internal ones
-            loops = [l for l in closed_loops 
-                     if loop_length(l) >= 0.15 * longest_len]
+            loops = []
 
 
         shared_edges = []
