@@ -1329,9 +1329,11 @@ class DFMMainWindow(QMainWindow):
         self.kpi_sub_score.setText(f"Rating: {score_desc}")
         
         d = res.mold_direction
-        if abs(d[0]) > 0.9:
+        d_abs = [abs(x) for x in d]
+        max_idx = d_abs.index(max(d_abs))
+        if max_idx == 0:
             recommended_axis = "X-Axis"
-        elif abs(d[1]) > 0.9:
+        elif max_idx == 1:
             recommended_axis = "Y-Axis"
         else:
             recommended_axis = "Z-Axis"
@@ -1703,11 +1705,13 @@ class DFMMainWindow(QMainWindow):
         bz_max = zmax + dz * 0.15
 
         # Build mold half boxes along the correct pull axis
-        if abs(d[0]) > 0.9:
+        d_abs = [abs(x) for x in d]
+        max_idx = d_abs.index(max(d_abs))
+        if max_idx == 0:
             # X-axis pull
             cavity_box = BRepPrimAPI_MakeBox(gp_Pnt(z_split, by_min, bz_min), gp_Pnt(bx_max, by_max, bz_max)).Shape()
             core_box   = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, by_min, bz_min), gp_Pnt(z_split, by_max, bz_max)).Shape()
-        elif abs(d[1]) > 0.9:
+        elif max_idx == 1:
             # Y-axis pull
             cavity_box = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, z_split, bz_min), gp_Pnt(bx_max, by_max, bz_max)).Shape()
             core_box   = BRepPrimAPI_MakeBox(gp_Pnt(bx_min, by_min, bz_min), gp_Pnt(bx_max, z_split, bz_max)).Shape()
@@ -1729,11 +1733,11 @@ class DFMMainWindow(QMainWindow):
 
         # Separation driven by slider
         sep = getattr(self, 'parting_separation', 0.8)
-        if abs(d[0]) > 0.9:
+        if max_idx == 0:
             span = dx
             trans_vec_cav = gp_Vec( span * sep, 0, 0)
             trans_vec_cor = gp_Vec(-span * sep, 0, 0)
-        elif abs(d[1]) > 0.9:
+        elif max_idx == 1:
             span = dy
             trans_vec_cav = gp_Vec(0,  span * sep, 0)
             trans_vec_cor = gp_Vec(0, -span * sep, 0)
