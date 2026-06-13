@@ -480,147 +480,32 @@ class DFMEngine:
         # edge_radii = [get_edge_radius(e) for e in section_edges]
         # max_r = max(edge_radii) if edge_radii else 1.0
 
-        # [NEW] Silhouette-Edge Parting Line Detection
-        # Parting line edges are defined as edges shared by at least one CAVITY face
-        # and at least one CORE face, relative to the optimal pull direction.
-        # This follows the physical definition of a parting line in injection molding.
-        # Replaces the flat plane-intersection approach which caused mid-body splits.
+        # [NEW] Hybrid Parting Line Detection
+        # Z-axis: Uses Silhouette-Edge detection for 3D non-planar parting boundaries
+        # X/Y-axes: Uses Plane-Intersection (Section Cut) for planar parting curves on smooth/revolved surfaces
         import math
-        from OCC.Core.gp import gp_Dir
-        from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_ListIteratorOfListOfShape
-        from OCC.Core.TopExp import topexp
-        from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED
+        from OCC.Core.gp import gp_Pln, gp_Pnt, gp_Dir
+        from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Section
+        from OCC.Core.TopExp import TopExp_Explorer
+        from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_VERTEX
         from OCC.Core.TopoDS import topods
         from OCC.Core.BRep import BRep_Tool
         from OCC.Core.BRepTools import breptools
         from OCC.Core.GeomLProp import GeomLProp_SLProps
-
-        pull_dir = self.best_direction
-        pull_gp = gp_Dir(float(pull_dir[0]), float(pull_dir[1]), float(pull_dir[2]))
-
-        face_normal_cache = {}
-
-        def get_face_normal(face):
-            h = face.HashCode(20000000)
-            if h in face_normal_cache:
-                for f, n in face_normal_cache[h]:
-                    if f.IsSame(face):
-                        return n
-            
-            normal_dir = None
-            try:
-                surface = BRep_Tool.Surface(face)
-                u_min, u_max, v_min, v_max = breptools.UVBounds(face)
-                u_mid = (u_min + u_max) / 2.0
-                v_mid = (v_min + v_max) / 2.0
-                
-                props = GeomLProp_SLProps(surface, u_mid, v_mid, 1, 1e-6)
-                if props.IsNormalDefined():
-                    n = props.Normal()
-                    nx, ny, nz = n.X(), n.Y(), n.Z()
-                    norm_val = math.sqrt(nx*nx + ny*ny + nz*nz)
-                    if norm_val > 1e-6:
-                        if face.Orientation() == TopAbs_REVERSED:
-                            nx, ny, nz = -nx, -ny, -nz
-                        normal_dir = gp_Dir(nx, ny, nz)
-            except Exception:
-                normal_dir = None
-                
-            if h not in face_normal_cache:
-                face_normal_cache[h] = []
-            face_normal_cache[h].append((face, normal_dir))
-            return normal_dir
-
-        def classify_face(face, pull_gp):
-            normal = get_face_normal(face)
-            if normal is None:
-                return "CAVITY"
-            dot = normal.Dot(pull_gp)
-            if dot >= 0.0:
-                return "CAVITY"
-            else:
-                return "CORE"
-
-        edge_face_map = TopTools_IndexedDataMapOfShapeListOfShape()
-        topexp.MapShapesAndAncestors(self.part.shape, TopAbs_EDGE, TopAbs_FACE, edge_face_map)
-
-        # Pre-classify all faces for performance
-        from OCC.Core.TopExp import TopExp_Explorer
-        face_explorer = TopExp_Explorer(self.part.shape, TopAbs_FACE)
-        face_class_map = {}
-        while face_explorer.More():
-            f = topods.Face(face_explorer.Current())
-            cls = classify_face(f, pull_gp)
-            h = f.HashCode(20000000)
-            if h not in face_class_map:
-                face_class_map[h] = []
-            face_class_map[h].append((f, cls))
-            face_explorer.Next()
-
-        parting_edges = []
-        for i in range(1, edge_face_map.Size() + 1):
-            edge = topods.Edge(edge_face_map.FindKey(i))
-            faces_list = edge_face_map.FindFromIndex(i)
-            
-            adjacent_faces = []
-            it = TopTools_ListIteratorOfListOfShape(faces_list)
-            while it.More():
-                adjacent_faces.append(topods.Face(it.Value()))
-                it.Next()
-                
-            classifications = []
-            for f in adjacent_faces:
-                h = f.HashCode(20000000)
-                cls = "SIDE"
-                if h in face_class_map:
-                    for cached_f, cached_cls in face_class_map[h]:
-                        if cached_f.IsSame(f):
-                            cls = cached_cls
-                            break
-                classifications.append(cls)
-            
-            if "CAVITY" in classifications and "CORE" in classifications:
-                parting_edges.append(edge)
-
-        # Axis setup
-        if best_axis == "X":
-            axis_idx = 0
-            active_split = x_split
-        elif best_axis == "Y":
-            axis_idx = 1
-            active_split = y_split
-        else:
-            axis_idx = 2
-            active_split = z_split
-
         from OCC.Core.Bnd import Bnd_Box
         from OCC.Core.BRepBndLib import brepbndlib
-        _fbbox = Bnd_Box()
-        brepbndlib.Add(self.part.shape, _fbbox)
-        _fb = _fbbox.Get()
-        _part_span = _fb[axis_idx + 3] - _fb[axis_idx]
+        from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_ListIteratorOfListOfShape
+        from OCC.Core.TopExp import topexp
 
-        # Use 20% band — wider than before to capture outer silhouette
-        _band = 0.20 * _part_span
+        # Bounding box & dimensions
+        bbox = Bnd_Box()
+        brepbndlib.Add(self.part.shape, bbox)
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+        _dims = [xmax - xmin, ymax - ymin, zmax - zmin]
+        _min_dim = min(d for d in _dims if d > 0)
 
-        def get_edge_mid_coord(edge, ax):
-            try:
-                from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
-                a = BRepAdaptor_Curve(edge)
-                t = (a.FirstParameter() + a.LastParameter()) / 2.0
-                pt = a.Value(t)
-                return [pt.X(), pt.Y(), pt.Z()][ax]
-            except Exception:
-                return None
-
-        parting_edges = [
-            e for e in parting_edges
-            if (c := get_edge_mid_coord(e, axis_idx)) is not None
-            and abs(c - active_split) <= _band
-        ]
-
+        # Common loop builder helper
         def build_loops_for_edges(edge_list, tol_val):
-            from OCC.Core.BRep import BRep_Tool
             from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
             edge_infos = []
             for e in edge_list:
@@ -639,9 +524,6 @@ class DFMEngine:
                     pass
             loops_out = []
             used = set()
-            import math as _math
-            loops_out = []
-            used = set()
             while len(used) < len(edge_infos):
                 start_idx = next((i for i in range(len(edge_infos)) if i not in used), -1)
                 if start_idx == -1:
@@ -656,8 +538,8 @@ class DFMEngine:
                     for i, info in enumerate(edge_infos):
                         if i in used:
                             continue
-                        d1 = _math.dist(info['p1'], ep)
-                        d2 = _math.dist(info['p2'], ep)
+                        d1 = math.dist(info['p1'], ep)
+                        d2 = math.dist(info['p2'], ep)
                         if d1 < tol_val:
                             chain.append(dict(info))
                             used.add(i); growing = True; break
@@ -672,19 +554,17 @@ class DFMEngine:
                     for i, info in enumerate(edge_infos):
                         if i in used:
                             continue
-                        d1 = _math.dist(info['p1'], sp)
-                        d2 = _math.dist(info['p2'], sp)
+                        d1 = math.dist(info['p1'], sp)
+                        d2 = math.dist(info['p2'], sp)
                         if d2 < tol_val:
-                            # info's p2 connects to our start → insert as-is (info's p1 is new start)
                             chain.insert(0, dict(info))
                             used.add(i); growing = True; break
                         elif d1 < tol_val:
-                            # info's p1 connects to our start → insert reversed
                             chain.insert(0, {'edge': info['edge'], 'p1': info['p2'], 'p2': info['p1']})
                             used.add(i); growing = True; break
                 p_start = chain[0]['p1']
                 p_end = chain[-1]['p2']
-                is_closed = _math.dist(p_start, p_end) < tol_val
+                is_closed = math.dist(p_start, p_end) < tol_val
                 pts = [item['p1'] for item in chain] + [chain[-1]['p2']]
                 loops_out.append({
                     'edges': [item['edge'] for item in chain],
@@ -693,95 +573,156 @@ class DFMEngine:
                 })
             return loops_out
 
+        if best_axis == "Z":
+            # --- Z-Axis: Silhouette-Edge Method ---
+            pull_dir = self.best_direction
+            pull_gp = gp_Dir(float(pull_dir[0]), float(pull_dir[1]), float(pull_dir[2]))
 
-        # Trace parting edges into closed loops with a tolerance value (LOOP_TOL)
-        # Dynamic tolerance: 1% of the smallest bounding box dimension
-        # This prevents bridging gaps between unrelated features
-        from OCC.Core.Bnd import Bnd_Box
-        from OCC.Core.BRepBndLib import brepbndlib
-        _tol_bbox = Bnd_Box()
-        brepbndlib.Add(self.part.shape, _tol_bbox)
-        _tb = _tol_bbox.Get()
-        _dims = [
-            _tb[3] - _tb[0],  # X span
-            _tb[4] - _tb[1],  # Y span
-            _tb[5] - _tb[2],  # Z span
-        ]
-        _min_dim = min(d for d in _dims if d > 0)
-        LOOP_TOL = max(0.1, _min_dim * 0.01)
-        # Cap at 1.0mm — enough to close genuine gaps, not bridge features
-        LOOP_TOL = min(LOOP_TOL, 1.0)
-        all_loops = build_loops_for_edges(parting_edges, LOOP_TOL)
+            face_normal_cache = {}
 
-        # [LEGACY] Plane-intersection parting line processing (commented out)
-        # # ----------------------------------------------------------------
-        # # For the parting LINE we want the widest silhouette cross-section,
-        # # which is the geometric centroid midplane (perpendicular to pull).
-        # # The optimal mold-split plane (z_split) may be off-center, but the
-        # # parting LINE definition is the part boundary at that midplane.
-        # # Re-section at the midplane for a better parting line display.
-        # # The mold split value (z_split) is still used for mold visualization.
-        # # ----------------------------------------------------------------
-        # if axis_name == "X":
-        #     midplane_val = (xmin + xmax) / 2.0
-        #     mid_pnt_origin = gp_Pnt(midplane_val, 0, 0)
-        # elif axis_name == "Y":
-        #     midplane_val = (ymin + ymax) / 2.0
-        #     mid_pnt_origin = gp_Pnt(0, midplane_val, 0)
-        # else:
-        #     midplane_val = (zmin + zmax) / 2.0
-        #     mid_pnt_origin = gp_Pnt(0, 0, midplane_val)
-        # 
-        # # Always re-section at the midplane
-        # mid_pln = gp_Pln(mid_pnt_origin, dir_vector)
-        # mid_section = BRepAlgoAPI_Section(self.part.shape, mid_pln, True)
-        # mid_section.Build()
-        # mid_explorer = TopExp_Explorer(mid_section.Shape(), TopAbs_EDGE)
-        # section_edges = []
-        # while mid_explorer.More():
-        #     section_edges.append(topods.Edge(mid_explorer.Current()))
-        #     mid_explorer.Next()
-        # 
-        # edge_radii = [get_edge_radius(e) for e in section_edges]
-        # max_r = max(edge_radii) if edge_radii else 1.0
-        # 
-        # # Use generous tolerance so slightly-gapped section edges still close
-        # # 6.0mm covers corner gaps in complex parts (Part1 has ~5mm corner gaps)
-        # LOOP_TOL = 6.0
-        # 
-        # all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
-        # loops = [l for l in all_loops if l['is_closed']]
-        # 
-        # 
-        # # Package raw edges for the result object
-        # shared_edges = []
-        # for l in loops:
-        #     for e in l['edges']:
-        #         shared_edges.append({
-        #             "face_a": -1,
-        #             "face_b": -1,
-        #             "edge": e
-        #         })
-        # 
-        # 
-        # total_parting_length = 0.0
-        # for loop in loops:
-        #     for edge in loop["edges"]:
-        #         total_parting_length += self._get_edge_length(edge)
-        #         
-        # is_closed_loop = all(loop["is_closed"] for loop in loops) if loops else False
+            def get_face_normal(face):
+                h = face.HashCode(20000000)
+                if h in face_normal_cache:
+                    for f, n in face_normal_cache[h]:
+                        if f.IsSame(face):
+                            return n
+                
+                normal_dir = None
+                try:
+                    surface = BRep_Tool.Surface(face)
+                    u_min, u_max, v_min, v_max = breptools.UVBounds(face)
+                    u_mid = (u_min + u_max) / 2.0
+                    v_mid = (v_min + v_max) / 2.0
+                    
+                    props = GeomLProp_SLProps(surface, u_mid, v_mid, 1, 1e-6)
+                    if props.IsNormalDefined():
+                        n = props.Normal()
+                        nx, ny, nz = n.X(), n.Y(), n.Z()
+                        norm_val = math.sqrt(nx*nx + ny*ny + nz*nz)
+                        if norm_val > 1e-6:
+                            if face.Orientation() == TopAbs_REVERSED:
+                                nx, ny, nz = -nx, -ny, -nz
+                            normal_dir = gp_Dir(nx, ny, nz)
+                except Exception:
+                    normal_dir = None
+                    
+                if h not in face_normal_cache:
+                    face_normal_cache[h] = []
+                face_normal_cache[h].append((face, normal_dir))
+                return normal_dir
 
-        # [NEW] Silhouette-Edge Parting Line Processing
-        closed_loops = [l for l in all_loops if l['is_closed']]
-        if closed_loops:
-            # Keep only loops longer than 10% of the longest
-            def _ll(loop):
-                return sum(self._get_edge_length(e) for e in loop['edges'])
-            max_len = max(_ll(l) for l in closed_loops)
-            loops = [l for l in closed_loops if _ll(l) >= 0.10 * max_len]
+            def classify_face(face, pull_gp):
+                normal = get_face_normal(face)
+                if normal is None:
+                    return "CAVITY"
+                dot = normal.Dot(pull_gp)
+                if dot >= 0.0:
+                    return "CAVITY"
+                else:
+                    return "CORE"
+
+            edge_face_map = TopTools_IndexedDataMapOfShapeListOfShape()
+            topexp.MapShapesAndAncestors(self.part.shape, TopAbs_EDGE, TopAbs_FACE, edge_face_map)
+
+            face_explorer = TopExp_Explorer(self.part.shape, TopAbs_FACE)
+            face_class_map = {}
+            while face_explorer.More():
+                f = topods.Face(face_explorer.Current())
+                cls = classify_face(f, pull_gp)
+                h = f.HashCode(20000000)
+                if h not in face_class_map:
+                    face_class_map[h] = []
+                face_class_map[h].append((f, cls))
+                face_explorer.Next()
+
+            parting_edges = []
+            for i in range(1, edge_face_map.Size() + 1):
+                edge = topods.Edge(edge_face_map.FindKey(i))
+                faces_list = edge_face_map.FindFromIndex(i)
+                
+                adjacent_faces = []
+                it = TopTools_ListIteratorOfListOfShape(faces_list)
+                while it.More():
+                    adjacent_faces.append(topods.Face(it.Value()))
+                    it.Next()
+                    
+                classifications = []
+                for f in adjacent_faces:
+                    h = f.HashCode(20000000)
+                    cls = "SIDE"
+                    if h in face_class_map:
+                        for cached_f, cached_cls in face_class_map[h]:
+                            if cached_f.IsSame(f):
+                                cls = cached_cls
+                                break
+                    classifications.append(cls)
+                
+                if "CAVITY" in classifications and "CORE" in classifications:
+                    parting_edges.append(edge)
+
+            axis_idx = 2
+            active_split = z_split
+            _part_span = zmax - zmin
+            _band = 0.15 * _part_span
+
+            def is_edge_within_band(edge, split_val, band_val, ax):
+                try:
+                    from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+                    adaptor = BRepAdaptor_Curve(edge)
+                    t1, t2 = adaptor.FirstParameter(), adaptor.LastParameter()
+                    p1 = adaptor.Value(t1)
+                    p2 = adaptor.Value(t2)
+                    pt_mid = adaptor.Value((t1 + t2) / 2.0)
+                    h1  = [p1.X(),     p1.Y(),     p1.Z()    ][ax]
+                    h2  = [p2.X(),     p2.Y(),     p2.Z()    ][ax]
+                    hm  = [pt_mid.X(), pt_mid.Y(), pt_mid.Z()][ax]
+                    return (abs(h1 - split_val) <= band_val and
+                            abs(h2 - split_val) <= band_val and
+                            abs(hm - split_val) <= band_val)
+                except Exception:
+                    return False
+
+            parting_edges = [
+                e for e in parting_edges
+                if is_edge_within_band(e, active_split, _band, axis_idx)
+            ]
+
+            LOOP_TOL = 20.0
+            all_loops = build_loops_for_edges(parting_edges, LOOP_TOL)
+            
+            closed_loops = [l for l in all_loops if l['is_closed']]
+            if closed_loops:
+                def _ll(loop):
+                    return sum(self._get_edge_length(e) for e in loop['edges'])
+                max_len = max(_ll(l) for l in closed_loops)
+                loops = [l for l in closed_loops if _ll(l) >= 0.10 * max_len]
+            else:
+                loops = []
+
         else:
-            loops = []
+            # --- X/Y-Axes: Plane-Intersection (Section Cut) Method ---
+            axis_name = "X"
+            midplane_val = (xmin + xmax) / 2.0
+            dir_vector = gp_Dir(1, 0, 0)
+            if best_axis == "Y":
+                axis_name = "Y"
+                midplane_val = (ymin + ymax) / 2.0
+                dir_vector = gp_Dir(0, 1, 0)
 
+            pnt_origin = gp_Pnt(midplane_val, 0, 0) if axis_name == "X" else gp_Pnt(0, midplane_val, 0)
+            pln = gp_Pln(pnt_origin, dir_vector)
+            section = BRepAlgoAPI_Section(self.part.shape, pln, True)
+            section.Build()
+            
+            sec_explorer = TopExp_Explorer(section.Shape(), TopAbs_EDGE)
+            section_edges = []
+            while sec_explorer.More():
+                section_edges.append(topods.Edge(sec_explorer.Current()))
+                sec_explorer.Next()
+
+            LOOP_TOL = min(6.0, _min_dim * 0.1)
+            all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
+            loops = [l for l in all_loops if l['is_closed']]
 
         shared_edges = []
         for l in loops:
