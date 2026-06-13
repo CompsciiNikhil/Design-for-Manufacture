@@ -154,12 +154,14 @@ class MoldDirectionAnalyzer:
             25.0 * undercut_faces
         )
 
-        # Prioritize vertical-ish (Z-aligned) directions ONLY as a tiny tie-breaker to avoid
-        # horizontal directions if scores are identical, but do not override the actual physical score.
+        # Prioritize vertical-ish (Z-aligned) directions to avoid
+        # horizontal directions, which are often less practical or represent
+        # a sideways mold opening.
         z_component = abs(direction[2])
         total_area = safe_area + warning_area + undercut_area
         if total_area > 0:
-            score += 0.001 * z_component * total_area
+            # Add a significant bonus for Z-alignment (up to 5.0 * total_area)
+            score += 5.0 * z_component * total_area
 
         return score
 

@@ -81,7 +81,20 @@ class PartingLoopExtractor:
 
         loops = []
         used = set()
-        tol = 1e-3  # 0.001 mm tolerance for snapping vertices
+        # Relative snap tolerance: 0.5 % of the edge-set bounding-box diagonal,
+        # floored at 0.0001 mm so micro-parts don't degenerate.
+        # This mirrors the strategy used in dfm_engine.py (LOOP_TOL).
+        all_pts = [info['p1'] for info in edge_infos] + [info['p2'] for info in edge_infos]
+        if all_pts:
+            xs, ys, zs = zip(*all_pts)
+            diag = math.sqrt(
+                (max(xs) - min(xs)) ** 2 +
+                (max(ys) - min(ys)) ** 2 +
+                (max(zs) - min(zs)) ** 2
+            )
+            tol = max(1e-4, diag * 0.005)
+        else:
+            tol = 1e-3
 
         while len(used) < len(edge_infos):
             # Find the first unused edge

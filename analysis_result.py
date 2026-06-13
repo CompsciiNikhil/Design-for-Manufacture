@@ -33,6 +33,7 @@ class AnalysisResult:
     })
     dfm_score: int = 0
     optimal_z: float = 10.0
+    optimal_axis: str = "Z"  # The pull-direction axis: "X", "Y", or "Z"
     parting_plane_z: float = 0.0  # Midplane used for parting line display (may differ from optimal_z)
     optimal_stats: Dict[str, Any] = field(default_factory=dict)
     standard_positions: Dict[str, Any] = field(default_factory=dict)

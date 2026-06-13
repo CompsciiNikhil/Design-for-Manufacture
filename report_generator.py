@@ -75,7 +75,7 @@ def export_pdf(file_path, analysis_result):
     data = [
         [Paragraph("Metric", header_col_style), Paragraph("Value", header_col_style)],
         [Paragraph("Total Face Count", body_style), Paragraph(str(analysis_result.face_count), body_style)],
-        [Paragraph("Optimal Z Parting Height", body_style), Paragraph(f"{analysis_result.optimal_z:.2f} mm", body_style)],
+        [Paragraph(f"Optimal {getattr(analysis_result, 'optimal_axis', 'Z')} Parting Position", body_style), Paragraph(f"{analysis_result.optimal_z:.2f} mm", body_style)],
         [Paragraph("Moldability Score", body_style), Paragraph(f"{analysis_result.moldability_score:.2f} / 100", body_style)],
         [Paragraph("Classification Status", body_style), Paragraph(classification, body_style)],
         [Paragraph("Undercuts Count", body_style), Paragraph(str(opt_stats.get('undercut_count', 0)), body_style)],
@@ -99,8 +99,9 @@ def export_pdf(file_path, analysis_result):
     
     # Justification section
     story.append(Paragraph("Engineering Recommendation", heading_style))
+    axis_label = getattr(analysis_result, 'optimal_axis', 'Z')
     justification = (
-        f"The Z = {analysis_result.optimal_z:.2f} mm split minimizes undercut area ({opt_stats.get('undercut_area', 0.0):.1f} mm²), "
+        f"The {axis_label} = {analysis_result.optimal_z:.2f} mm split minimizes undercut area ({opt_stats.get('undercut_area', 0.0):.1f} mm²), "
         f"reduces faces requiring geometric splitting ({opt_stats.get('crossing_faces', 0)}), and produces a highly balanced core/cavity separation. "
         f"This parting plane yields the highest moldability score ({analysis_result.moldability_score:.1f}) among all scanned candidates. "
         f"The physical moldability status is classified as: '{classification}'."

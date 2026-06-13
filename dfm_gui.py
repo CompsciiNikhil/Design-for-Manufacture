@@ -919,6 +919,19 @@ class DFMMainWindow(QMainWindow):
         title_metrics.setProperty("class", "section-title")
         panel_layout.addWidget(title_metrics)
         
+        # Parting Line Method Selector
+        method_row = QWidget()
+        method_lyt = QHBoxLayout(method_row)
+        method_lyt.setContentsMargins(0, 2, 0, 2)
+        method_lbl = QLabel("Parting Line Method:")
+        method_lbl.setProperty("class", "lbl-text")
+        self.parting_method_combo = QComboBox()
+        self.parting_method_combo.addItems(["Hybrid / Silhouette (3D)", "Planar Section (Flat Slice)"])
+        self.parting_method_combo.currentTextChanged.connect(self.on_parting_method_changed)
+        method_lyt.addWidget(method_lbl)
+        method_lyt.addWidget(self.parting_method_combo)
+        panel_layout.addWidget(method_row)
+        
         _, self.val_parting_status = self.create_stat_row(panel_layout, "Status:")
         _, self.val_parting_length = self.create_stat_row(panel_layout, "Line Length:")
         _, self.val_closed_loop = self.create_stat_row(panel_layout, "Closed Loop:")
@@ -1227,6 +1240,72 @@ class DFMMainWindow(QMainWindow):
             self.tabs.setEnabled(True)
             QApplication.restoreOverrideCursor()
 
+    def apply_custom_opening_axis(self, axis_name):
+        if not self.engine or not self.engine.part:
+            return
+        
+        # Disable controls
+        self.open_btn.setEnabled(False)
+        self.material_combo.setEnabled(False)
+        self.run_btn.setEnabled(False)
+        self.tabs.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        progress_dialog = DFMProgressDialog(self)
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.show()
+        QApplication.processEvents()
+
+        msg_to_progress = {
+            "Loading STEP Geometry...": (10, "Loading STEP Geometry...", 1),
+            "Optimizing Mold Direction...": (30, "Optimizing Mold Direction...", 3),
+            "Computing Draft Analysis...": (50, "Computing Draft Analysis...", 4),
+            "Detecting Undercuts...": (70, "Detecting Undercuts...", 5),
+            "Building Face Topology...": (80, "Building Face Topology...", 6),
+            "Generating Parting Line...": (90, "Generating Parting Line...", 7),
+            "Finalizing Report...": (95, "Finalizing Report...", 8)
+        }
+
+        def progress_callback(msg):
+            self.statusBar().showMessage(msg)
+            pct, phase, stages_count = msg_to_progress.get(msg, (50, msg, 4))
+            progress_dialog.update_progress(pct, phase, stages_count)
+            QApplication.processEvents()
+            
+        material = self.material_combo.currentText()
+        print(f"Re-running DfM analysis for custom axis {axis_name}...", flush=True)
+        try:
+            self.analysis_result = self.engine.run_analysis(material, callback=progress_callback, custom_axis=axis_name)
+            print("Analysis complete", flush=True)
+            self.update_ui_stats()
+            self.update_demo_comparison_table()
+            self.populate_demo_cases()
+            
+            print("UI stats updated", flush=True)
+            self.on_tab_changed(self.tabs.currentIndex())
+            print("Tab changed triggered", flush=True)
+            self.statusBar().showMessage(f"Analysis complete for {material} ({axis_name}-Axis). DfM Score: {self.analysis_result.dfm_score}/100")
+            
+            progress_dialog.finish_progress()
+            if os.environ.get("DFM_TEST_MODE") == "1":
+                progress_dialog.accept()
+            else:
+                progress_dialog.exec_()
+        except Exception as e:
+            print(f"Analysis failed: {str(e)}", flush=True)
+            import traceback
+            traceback.print_exc()
+            self.statusBar().showMessage(f"Analysis failed: {str(e)}")
+            progress_dialog.close()
+            QMessageBox.critical(self, "Error", f"Analysis failed:\n{str(e)}")
+        finally:
+            # Re-enable controls
+            self.open_btn.setEnabled(True)
+            self.material_combo.setEnabled(True)
+            self.run_btn.setEnabled(True)
+            self.tabs.setEnabled(True)
+            QApplication.restoreOverrideCursor()
+
     def update_ui_stats(self):
         res = self.analysis_result
         if not res:
@@ -1378,6 +1457,13 @@ class DFMMainWindow(QMainWindow):
         self.undercut_val_sil_area.setText(f"{res.mold_split['silhouette_area']:.2f} mm²")
         
         # 4. Parting Line Tab
+        self.parting_method_combo.blockSignals(True)
+        if res.parting_line.get("method") == "planar_section":
+            self.parting_method_combo.setCurrentText("Planar Section (Flat Slice)")
+        else:
+            self.parting_method_combo.setCurrentText("Hybrid / Silhouette (3D)")
+        self.parting_method_combo.blockSignals(False)
+
         self.val_parting_status.setText("✅ Detected" if res.parting_line['edge_count'] > 0 else "❌ None")
         self.val_parting_length.setText(f"{res.parting_line['total_length_mm']:.2f} mm")
         self.val_closed_loop.setText("Yes" if res.parting_line['is_closed_loop'] else "No")
@@ -1521,7 +1607,39 @@ class DFMMainWindow(QMainWindow):
                 ais_edge.Attributes().SetFreeBoundaryAspect(aspect)
                 ais_edge.Attributes().SetUnFreeBoundaryAspect(aspect)
                 self.display.Context.Redisplay(ais_edge, False)
-        print("render_mold_split completed", flush=True)
+    def on_parting_method_changed(self, text):
+        if not self.analysis_result or not self.engine:
+            return
+        
+        pl = self.analysis_result.parting_line
+        if text == "Planar Section (Flat Slice)":
+            pl["loops"] = pl.get("section_loops", [])
+            pl["raw_edges"] = pl.get("section_raw_edges", [])
+            pl["method"] = "planar_section"
+        else:
+            pl["loops"] = pl.get("silhouette_loops", [])
+            pl["raw_edges"] = pl.get("silhouette_raw_edges", [])
+            pl["method"] = "silhouette_topology_v3"
+            
+        pl["edge_count"] = len(pl["raw_edges"])
+        pl["total_length_mm"] = sum(self.engine._get_edge_length(e["edge"]) for e in pl["raw_edges"])
+        pl["is_closed_loop"] = all(loop["is_closed"] for loop in pl["loops"]) if pl["loops"] else False
+        
+        # Update metrics tab display
+        self.val_parting_status.setText("✅ Detected" if pl['edge_count'] > 0 else "❌ None")
+        self.val_parting_length.setText(f"{pl['total_length_mm']:.2f} mm")
+        self.val_closed_loop.setText("Yes" if pl['is_closed_loop'] else "No")
+        self.val_loop_count.setText(str(len(pl['loops'])))
+        
+        loop_details_lines = []
+        for i, loop in enumerate(pl['loops']):
+            loop_len = sum(self.engine._get_edge_length(edge) for edge in loop['edges'])
+            status_str = "Closed" if loop['is_closed'] else "Open"
+            loop_details_lines.append(f"Loop {i+1:2d}: {status_str:<6} | Length: {loop_len:.2f} mm | Edges: {len(loop['edges'])}")
+        self.loop_details_txt.setText("\n".join(loop_details_lines) if loop_details_lines else "No loops detected.")
+        
+        # Redraw viewport
+        self.render_parting_line()
 
     def render_parting_line(self):
         print("render_parting_line starting", flush=True)
@@ -1741,6 +1859,45 @@ class DFMMainWindow(QMainWindow):
         self.demo_comp_table.setWordWrap(True)
         self.demo_comp_table.setStyleSheet("font-family: 'Segoe UI', monospace; font-size: 11px;")
         comp_layout.addWidget(self.demo_comp_table)
+        
+        # Add buttons to choose the axis
+        btn_layout = QHBoxLayout()
+        self.btn_use_x = QPushButton("Use X-Axis")
+        self.btn_use_y = QPushButton("Use Y-Axis")
+        self.btn_use_z = QPushButton("Use Z-Axis")
+        
+        btn_style = """
+            QPushButton {
+                background-color: #2d2d44;
+                color: #dfdfea;
+                border: 1px solid #3d3d5c;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #e20015;
+                color: white;
+            }
+            QPushButton:disabled {
+                background-color: #1a1a26;
+                color: #555566;
+                border-color: #222233;
+            }
+        """
+        self.btn_use_x.setStyleSheet(btn_style)
+        self.btn_use_y.setStyleSheet(btn_style)
+        self.btn_use_z.setStyleSheet(btn_style)
+        
+        self.btn_use_x.clicked.connect(lambda: self.apply_custom_opening_axis("X"))
+        self.btn_use_y.clicked.connect(lambda: self.apply_custom_opening_axis("Y"))
+        self.btn_use_z.clicked.connect(lambda: self.apply_custom_opening_axis("Z"))
+        
+        btn_layout.addWidget(self.btn_use_x)
+        btn_layout.addWidget(self.btn_use_y)
+        btn_layout.addWidget(self.btn_use_z)
+        comp_layout.addLayout(btn_layout)
         
         scroll_layout.addWidget(comp_panel)
         

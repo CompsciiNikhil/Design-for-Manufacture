@@ -62,12 +62,9 @@ class DFMEngine:
         cavity_face_ids = []
         crossing_face_ids = []
 
-        # Determine index of axis based on direction vector
-        axis_idx = 2  # Default to Z
-        if abs(d[0]) > 0.9:
-            axis_idx = 0
-        elif abs(d[1]) > 0.9:
-            axis_idx = 1
+        # Determine dominant axis from direction vector — use argmax so
+        # oblique directions (no component > 0.9) are still resolved correctly.
+        axis_idx = int(np.argmax(np.abs(d)))
 
         # Pre-compute part bounding box for lateral protrusion size check
         part_bbox = Bnd_Box()
@@ -130,15 +127,15 @@ class DFMEngine:
 
             if face_max < split_val:
                 core_face_ids.append(face.face_id)
-                if dot_val > 1e-5:
+                if dot_val > 0.01:
                     is_undercut = True
             elif face_min > split_val:
                 cavity_face_ids.append(face.face_id)
-                if dot_val < -1e-5:
+                if dot_val < -0.01:
                     is_undercut = True
             else:
                 crossing_face_ids.append(face.face_id)
-                if abs(dot_val) > 1e-5:
+                if abs(dot_val) > 0.01:
                     is_undercut = True
                     
             if is_side_action:
@@ -268,19 +265,13 @@ class DFMEngine:
         return best_plane, best_score, best_stats
 
     def scan_parting_planes(self):
-        # Determine the best axis from self.best_direction
+        # Determine dominant axis from mold direction — argmax so oblique
+        # directions are never silently snapped to Z.
         d = np.array(self.best_direction, dtype=float)
-        axis_name = "Z"
-        axis_idx = 2
-        dir_vector = [0.0, 0.0, 1.0]
-        if abs(d[0]) > 0.9:
-            axis_name = "X"
-            axis_idx = 0
-            dir_vector = [1.0, 0.0, 0.0]
-        elif abs(d[1]) > 0.9:
-            axis_name = "Y"
-            axis_idx = 1
-            dir_vector = [0.0, 1.0, 0.0]
+        axis_idx = int(np.argmax(np.abs(d)))
+        axis_name = ["X", "Y", "Z"][axis_idx]
+        dir_vector = [0.0, 0.0, 0.0]
+        dir_vector[axis_idx] = 1.0 if d[axis_idx] >= 0 else -1.0
             
         best_z, best_score, best_stats = self.optimize_parting_plane_for_axis(axis_name)
 
@@ -352,7 +343,7 @@ class DFMEngine:
 
         return best_z, best_stats, standard_positions
 
-    def run_analysis(self, material="ABS", callback=None):
+    def run_analysis(self, material="ABS", callback=None, custom_axis=None):
         """Runs the entire DfM analysis pipeline."""
         if callback: callback("Loading STEP Geometry...")
         if self.part is None:
@@ -361,25 +352,36 @@ class DFMEngine:
         threshold_deg = MATERIAL_THRESHOLDS.get(material, 1.0)
         
         # 1. Optimal Mold Direction & Confidence
-        if callback: callback("Optimizing Mold Direction...")
-        
-        # Optimize parting plane for X, Y, and Z axes to find the most moldable direction
-        x_split, x_score, x_stats = self.optimize_parting_plane_for_axis("X")
-        y_split, y_score, y_stats = self.optimize_parting_plane_for_axis("Y")
-        z_split, z_score, z_stats = self.optimize_parting_plane_for_axis("Z")
-        
-        scores = {"X": x_score, "Y": y_score, "Z": z_score}
-        best_axis = max(scores, key=scores.get)
-        
-        if best_axis == "X":
-            self.best_direction = np.array([1.0, 0.0, 0.0])
-        elif best_axis == "Y":
-            self.best_direction = np.array([0.0, 1.0, 0.0])
+        if custom_axis is not None:
+            custom_axis = custom_axis.upper()
+            if custom_axis == "X":
+                self.best_direction = np.array([1.0, 0.0, 0.0])
+            elif custom_axis == "Y":
+                self.best_direction = np.array([0.0, 1.0, 0.0])
+            else:
+                self.best_direction = np.array([0.0, 0.0, 1.0])
+            self.confidence = 1.0
+            best_axis = custom_axis
+            print(f"Using custom mold direction axis: {best_axis}")
         else:
-            self.best_direction = np.array([0.0, 0.0, 1.0])
-            
-        self.confidence = scores[best_axis] / 100.0
-        print(f"Optimal axis selected via parting plane scores: {best_axis} (Score: {scores[best_axis]:.2f})")
+            # Use the Fibonacci-sphere optimizer (500 directions) to find the
+            # best pull direction — not restricted to the 3 principal axes.
+            if callback: callback("Optimizing Mold Direction...")
+            from mold_direction import MoldDirectionAnalyzer
+            mold_analyzer = MoldDirectionAnalyzer(self.part)
+            self.best_direction, self.confidence = mold_analyzer.find_best_direction(n_samples=500)
+            print(f"Fibonacci optimizer: best_direction={self.best_direction}, confidence={self.confidence:.3f}")
+
+            # Snap direction to the nearest principal axis name for parting-plane
+            # scanning (optimize_parting_plane_for_axis only supports X/Y/Z slabs).
+            d = np.array(self.best_direction, dtype=float)
+            if abs(d[0]) >= abs(d[1]) and abs(d[0]) >= abs(d[2]):
+                best_axis = "X"
+            elif abs(d[1]) >= abs(d[0]) and abs(d[1]) >= abs(d[2]):
+                best_axis = "Y"
+            else:
+                best_axis = "Z"
+            print(f"Nearest principal axis for parting-plane scan: {best_axis}")
         
         # 2. Draft Analysis
         if callback: callback("Computing Draft Analysis...")
@@ -393,10 +395,9 @@ class DFMEngine:
         
         draft_violation_count = sum(1 for r in draft_results if r["classification"] == "WARNING")
         
-        # 3. Undercut Detection
-        if callback: callback("Detecting Undercuts...")
-        undercut_det = UndercutDetector(self.part)
-        undercut_results = undercut_det.analyze(self.best_direction)
+        # 3. Undercut Detection — deferred until after scan_parting_planes() so
+        #    we can pass the optimised split coordinate instead of the fallback midpoint.
+        # (will be called below after z_split is determined)
         
         # 4. Core/Cavity Classification
         if callback: callback("Building Face Topology...")
@@ -407,10 +408,15 @@ class DFMEngine:
         silhouette_det = SilhouetteDetector(self.part)
         silhouette_results = silhouette_det.detect(self.best_direction)
         
-        # 6. Parting Line (Physically correct section-based parting curves at split plane)
-        # Determine the split plane Z height dynamically by scanning
+        # 3 (deferred). Parting-plane scan to get optimised split coordinate,
+        #               then run undercut detection against that plane.
         if callback: callback("Generating Parting Line...")
         z_split, optimal_stats, standard_positions = self.scan_parting_planes()
+
+        # Now run undercut detection with the consistent optimised split plane.
+        if callback: callback("Detecting Undercuts...")
+        undercut_det = UndercutDetector(self.part)
+        undercut_results = undercut_det.analyze(self.best_direction, split_value=z_split)
         
         from OCC.Core.Bnd import Bnd_Box
         from OCC.Core.BRepBndLib import brepbndlib
@@ -421,19 +427,20 @@ class DFMEngine:
 
         from OCC.Core.gp import gp_Pln, gp_Pnt, gp_Dir
 
-        # Determine the best axis from self.best_direction
+        # Determine dominant axis — argmax covers all oblique directions.
         d = np.array(self.best_direction, dtype=float)
-        axis_name = "Z"
-        dir_vector = gp_Dir(0, 0, 1)
-        pnt_origin = gp_Pnt(0, 0, z_split)
-        if abs(d[0]) > 0.9:
-            axis_name = "X"
-            dir_vector = gp_Dir(1, 0, 0)
+        _ax = int(np.argmax(np.abs(d)))
+        axis_name = ["X", "Y", "Z"][_ax]
+        _sign = 1.0 if d[_ax] >= 0 else -1.0
+        if _ax == 0:
+            dir_vector = gp_Dir(_sign, 0, 0)
             pnt_origin = gp_Pnt(z_split, 0, 0)
-        elif abs(d[1]) > 0.9:
-            axis_name = "Y"
-            dir_vector = gp_Dir(0, 1, 0)
+        elif _ax == 1:
+            dir_vector = gp_Dir(0, _sign, 0)
             pnt_origin = gp_Pnt(0, z_split, 0)
+        else:
+            dir_vector = gp_Dir(0, 0, _sign)
+            pnt_origin = gp_Pnt(0, 0, z_split)
             
         # Intersect the part shape with the split plane
         from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Section
@@ -553,54 +560,106 @@ class DFMEngine:
             return loops_out
 
         # ----------------------------------------------------------------
-        # For the parting LINE we want the widest silhouette cross-section,
-        # which is the geometric centroid midplane (perpendicular to pull).
-        # The optimal mold-split plane (z_split) may be off-center, but the
-        # parting LINE definition is the part boundary at that midplane.
-        # Re-section at the midplane for a better parting line display.
-        # The mold split value (z_split) is still used for mold visualization.
+        # TRUE SILHOUETTE PARTING LINE
+        # An edge is a parting edge when it is shared between two faces
+        # whose normals have opposite sign dot-products with the pull direction
+        # (one faces toward the cavity, one toward the core).
+        # This is the geometrically correct definition and works for any part.
         # ----------------------------------------------------------------
-        if axis_name == "X":
-            midplane_val = (xmin + xmax) / 2.0
-            mid_pnt_origin = gp_Pnt(midplane_val, 0, 0)
-        elif axis_name == "Y":
-            midplane_val = (ymin + ymax) / 2.0
-            mid_pnt_origin = gp_Pnt(0, midplane_val, 0)
-        else:
-            midplane_val = (zmin + zmax) / 2.0
-            mid_pnt_origin = gp_Pnt(0, 0, midplane_val)
+        from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
+        from OCC.Core.TopExp import topexp as _topexp
+        from OCC.Core.TopAbs import TopAbs_EDGE as _TopAbs_EDGE
 
-        # Always re-section at the midplane
-        mid_pln = gp_Pln(mid_pnt_origin, dir_vector)
-        mid_section = BRepAlgoAPI_Section(self.part.shape, mid_pln, True)
-        mid_section.Build()
-        mid_explorer = TopExp_Explorer(mid_section.Shape(), TopAbs_EDGE)
-        section_edges = []
-        while mid_explorer.More():
-            section_edges.append(topods.Edge(mid_explorer.Current()))
-            mid_explorer.Next()
-        
-        edge_radii = [get_edge_radius(e) for e in section_edges]
-        max_r = max(edge_radii) if edge_radii else 1.0
+        pull_dir = np.array(self.best_direction, dtype=float)
+        pull_dir = pull_dir / (np.linalg.norm(pull_dir) or 1.0)
 
-        # Use generous tolerance so slightly-gapped section edges still close
-        # 6.0mm covers corner gaps in complex parts (Part1 has ~5mm corner gaps)
-        LOOP_TOL = 6.0
+        # Build a map: face_id -> dot(normal, pull_dir)
+        face_dot = {}
+        for face in self.part.faces:
+            n = np.array(face.normal, dtype=float)
+            nn = np.linalg.norm(n)
+            face_dot[face.face_id] = float(np.dot(n / nn, pull_dir)) if nn > 1e-10 else 0.0
 
-        all_loops = build_loops_for_edges(section_edges, LOOP_TOL)
-        loops = [l for l in all_loops if l['is_closed']]
+        # Build edge->adjacent-face-ids map using OCC topology
+        edge_face_map_sil = TopTools_IndexedDataMapOfShapeListOfShape()
+        _topexp.MapShapesAndAncestors(
+            self.part.shape,
+            6,   # TopAbs_EDGE
+            4,   # TopAbs_FACE
+            edge_face_map_sil
+        )
+        face_map_local = self.face_map  # face_id -> TopoDS_Face
 
-        
-        # Package raw edges for the result object
-        shared_edges = []
-        for l in loops:
+        silhouette_occ_edges = []
+        for ei in range(1, edge_face_map_sil.Size() + 1):
+            adj_faces = edge_face_map_sil.FindFromIndex(ei)
+            if adj_faces.Size() != 2:
+                continue
+            fa_shape = adj_faces.First()
+            fb_shape = adj_faces.Last()
+            # Resolve to face_id
+            id_a = id_b = None
+            for fid, fshape in face_map_local.items():
+                if fshape.IsSame(fa_shape):
+                    id_a = fid
+                if fshape.IsSame(fb_shape):
+                    id_b = fid
+                if id_a is not None and id_b is not None:
+                    break
+            if id_a is None or id_b is None:
+                continue
+            dot_a = face_dot.get(id_a, 0.0)
+            dot_b = face_dot.get(id_b, 0.0)
+            # Silhouette condition: dot products have opposite sign
+            # Use a small threshold (0.05 ≈ 2.9°) to avoid noise on near-tangent faces
+            SILL_TOL = 0.05
+            if dot_a > SILL_TOL and dot_b < -SILL_TOL or \
+               dot_a < -SILL_TOL and dot_b > SILL_TOL:
+                edge_key = edge_face_map_sil.FindKey(ei)
+                silhouette_occ_edges.append(topods.Edge(edge_key))
+
+        # Relative loop-stitching tolerance: 0.5% of bounding-box diagonal,
+        # floored at 0.01 mm so micro-parts don't degenerate.
+        _diag = math.sqrt((xmax-xmin)**2 + (ymax-ymin)**2 + (zmax-zmin)**2)
+        LOOP_TOL = max(0.01, _diag * 0.005)
+
+        # 1. Compute Silhouette Parting Line
+        all_silhouette_loops = build_loops_for_edges(silhouette_occ_edges, LOOP_TOL)
+        silhouette_shared_edges = []
+        for l in all_silhouette_loops:
             for e in l['edges']:
-                shared_edges.append({
-                    "face_a": -1,
-                    "face_b": -1,
-                    "edge": e
-                })
+                silhouette_shared_edges.append({"face_a": -1, "face_b": -1, "edge": e})
 
+        # 2. Compute Planar Section Parting Line
+        if axis_name == "X":
+            fb_pnt = gp_Pnt(z_split, 0, 0)
+        elif axis_name == "Y":
+            fb_pnt = gp_Pnt(0, z_split, 0)
+        else:
+            fb_pnt = gp_Pnt(0, 0, z_split)
+        fb_pln = gp_Pln(fb_pnt, dir_vector)
+        fb_sec = BRepAlgoAPI_Section(self.part.shape, fb_pln, True)
+        fb_sec.Build()
+        fb_exp = TopExp_Explorer(fb_sec.Shape(), TopAbs_EDGE)
+        fb_edges = []
+        while fb_exp.More():
+            fb_edges.append(topods.Edge(fb_exp.Current()))
+            fb_exp.Next()
+        all_section_loops = build_loops_for_edges(fb_edges, LOOP_TOL)
+        section_shared_edges = []
+        for l in all_section_loops:
+            for e in l['edges']:
+                section_shared_edges.append({"face_a": -1, "face_b": -1, "edge": e})
+
+        # Default to silhouette, fallback to section if silhouette is empty
+        if silhouette_shared_edges:
+            loops = all_silhouette_loops
+            shared_edges = silhouette_shared_edges
+            default_method = "silhouette_topology_v3"
+        else:
+            loops = all_section_loops
+            shared_edges = section_shared_edges
+            default_method = "planar_section"
         
         total_parting_length = 0.0
         for loop in loops:
@@ -644,12 +703,17 @@ class DFMEngine:
                 "edge_count": len(shared_edges),
                 "total_length_mm": total_parting_length,
                 "is_closed_loop": is_closed_loop,
-                "method": "silhouette_v2",
+                "method": default_method,
                 "loops": loops,
-                "raw_edges": shared_edges
+                "raw_edges": shared_edges,
+                "silhouette_loops": all_silhouette_loops,
+                "silhouette_raw_edges": silhouette_shared_edges,
+                "section_loops": all_section_loops,
+                "section_raw_edges": section_shared_edges
             },
             dfm_score=dfm_score,
             optimal_z=z_split,
+            optimal_axis=best_axis,
             optimal_stats=optimal_stats,
             standard_positions=standard_positions,
             moldability_score=optimal_stats["moldability_score"]

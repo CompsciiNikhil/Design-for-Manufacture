@@ -1,5 +1,5 @@
 from OCC.Core.STEPControl import STEPControl_Reader
-from OCC.Core.TopAbs import TopAbs_FACE, TopAbs_REVERSED
+from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 
@@ -95,13 +95,12 @@ class StepParser:
             if props.IsNormalDefined():
 
                 normal = props.Normal()
-                nx, ny, nz = normal.X(), normal.Y(), normal.Z()
 
-                # If the face has reversed orientation, negate the geometric normal
-                if face.Orientation() == TopAbs_REVERSED:
-                    nx, ny, nz = -nx, -ny, -nz
-
-                return (nx, ny, nz)
+                return (
+                    normal.X(),
+                    normal.Y(),
+                    normal.Z()
+                )
 
         except Exception:
             pass
