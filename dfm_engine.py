@@ -582,57 +582,7 @@ class DFMEngine:
             if "CAVITY" in classifications and "CORE" in classifications:
                 parting_edges.append(edge)
 
-        # Determine axis index from best axis
-        if best_axis == "X":
-            axis_idx = 0
-        elif best_axis == "Y":
-            axis_idx = 1
-        else:
-            axis_idx = 2
 
-        # Height band: keep edges within ±15% of part height around the correct split height
-        from OCC.Core.Bnd import Bnd_Box
-        from OCC.Core.BRepBndLib import brepbndlib
-        part_bbox = Bnd_Box()
-        brepbndlib.Add(self.part.shape, part_bbox)
-        b = part_bbox.Get()
-        part_height = b[axis_idx + 3] - b[axis_idx]
-
-        # Pick the correct split value based on best axis
-        if best_axis == "X":
-            active_split = x_split
-        elif best_axis == "Y":
-            active_split = y_split
-        else:
-            active_split = z_split
-
-        band = 0.15 * part_height
-
-        def is_edge_within_band(edge, split_val, band_val, axis_index):
-            try:
-                from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
-                adaptor = BRepAdaptor_Curve(edge)
-                t1, t2 = adaptor.FirstParameter(), adaptor.LastParameter()
-                p1 = adaptor.Value(t1)
-                p2 = adaptor.Value(t2)
-                pt_mid = adaptor.Value((t1 + t2) / 2.0)
-                
-                h1 = [p1.X(), p1.Y(), p1.Z()][axis_index]
-                h2 = [p2.X(), p2.Y(), p2.Z()][axis_index]
-                hm = [pt_mid.X(), pt_mid.Y(), pt_mid.Z()][axis_index]
-                
-                return (abs(h1 - split_val) <= band_val and 
-                        abs(h2 - split_val) <= band_val and 
-                        abs(hm - split_val) <= band_val)
-            except Exception:
-                return False
-
-        filtered_parting_edges = []
-        for edge in parting_edges:
-            if is_edge_within_band(edge, active_split, band, axis_idx):
-                filtered_parting_edges.append(edge)
-
-        parting_edges = filtered_parting_edges
 
 
         def build_loops_for_edges(edge_list, tol_val):
@@ -773,7 +723,26 @@ class DFMEngine:
         # is_closed_loop = all(loop["is_closed"] for loop in loops) if loops else False
 
         # [NEW] Silhouette-Edge Parting Line Processing
-        loops = [l for l in all_loops if l['is_closed']]
+        closed_loops = [l for l in all_loops if l['is_closed']]
+        
+        if not closed_loops:
+            loops = []
+        else:
+            # Compute length of each loop
+            def loop_length(loop):
+                total = 0.0
+                for edge in loop['edges']:
+                    total += self._get_edge_length(edge)
+                return total
+            
+            # Find the longest loop — this is always the outer perimeter
+            longest = max(closed_loops, key=loop_length)
+            longest_len = loop_length(longest)
+            
+            # Keep loops whose length is at least 15% of the longest loop
+            # This keeps meaningful outer loops and discards tiny internal ones
+            loops = [l for l in closed_loops 
+                     if loop_length(l) >= 0.15 * longest_len]
 
 
         shared_edges = []
