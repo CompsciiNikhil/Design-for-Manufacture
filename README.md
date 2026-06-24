@@ -5,7 +5,7 @@ An advanced engineering platform that automatically analyzes STEP (`.stp`/`.step
 
 ---
 
-## 🎯 Problem Statement
+##  Problem Statement
 
 Designing injection-molded plastic parts requires deep expertise in mold tooling design. Wall tapers and split configurations must be carefully aligned with mold-pull directions to prevent ejector locks or part damage. Manual compliance reviews are tedious and prone to oversight. 
 
@@ -13,25 +13,25 @@ This platform automates the entire geometry analysis pipeline, turning hours of 
 
 ---
 
-## ✨ Features
+##  Features
 
 | Feature | Status | Description |
 | :--- | :--- | :--- |
-| 📁 **STEP CAD Parser** | ✅ Done | Parses `.stp` / `.step` B-Rep files locally using OpenCascade bindings. |
-| 🔺 **Tessellation & Bounding Box** | ✅ Done | Converts B-Rep faces to triangular mesh surfaces and calculates exact physical bounding box dimensions. |
-| 🧭 **Mold Axis Optimization** | ✅ Done | Sweeps candidate pull directions across X, Y, and Z axes, scoring them based on undercut and draft conditions. |
-| 📏 **Draft Angle Heatmap** | ✅ Done | Computes face draft angles relative to the pull vector and highlights compliant, warning, and vertical faces. |
-| 🔍 **Undercut Detection** | ✅ Done | Detects undercut regions, calculates undercut surface areas, and flags necessary side actions. |
-| ✂️ **Parting Line Detection** | ✅ Done | Traces watertight parting loops at the optimal split height using topological edge connectivity. |
-| 🗜️ **Core & Cavity Boolean Split** | ✅ Done | Dynamically splits the part volume into discrete Core and Cavity blocks using solid Boolean cuts. |
-| ↕️ **Exploded Separation Slider** | ✅ Done | Provides a 3D animation slider to separate and review the core and cavity block halves in real time. |
-| 📄 **PDF & JSON Reports** | ✅ Done | Generates high-fidelity PDF engineering reports and exports raw metadata to JSON. |
-| 🖥️ **PyQt5 Standalone GUI** | ✅ Done | Dark-themed desktop engineering workstation with camera presets, progress dialogs, and coordinate triedrons. |
-| 🌐 **FastAPI & Streamlit Web App** | ✅ Done | Client-server web app allowing remote uploads, Plotly-based WebGL rendering, and parameterized analysis sweeps. |
+|  **STEP CAD Parser** | Done | Parses `.stp` / `.step` B-Rep files locally using OpenCascade bindings. |
+|  **Tessellation & Bounding Box** | Done | Converts B-Rep faces to triangular mesh surfaces and calculates exact physical bounding box dimensions. |
+|  **Mold Axis Optimization** | Done | Sweeps candidate pull directions across X, Y, and Z axes, scoring them based on undercut and draft conditions. |
+|  **Draft Angle Heatmap** | Done | Computes face draft angles relative to the pull vector and highlights compliant, warning, and vertical faces. |
+|  **Undercut Detection** | Done | Detects undercut regions, calculates undercut surface areas, and flags necessary side actions. |
+|  **Parting Line Detection** | Done | Traces watertight parting loops at the optimal split height using topological edge connectivity. |
+|  **Core & Cavity Boolean Split** | Done | Dynamically splits the part volume into discrete Core and Cavity blocks using solid Boolean cuts. |
+|  **Exploded Separation Slider** | Done | Provides a 3D animation slider to separate and review the core and cavity block halves in real time. |
+|  **PDF & JSON Reports** | Done | Generates high-fidelity PDF engineering reports and exports raw metadata to JSON. |
+|  **PyQt5 Standalone GUI** | Done | Dark-themed desktop engineering workstation with camera presets, progress dialogs, and coordinate triedrons. |
+|  **FastAPI & Streamlit Web App** | Done | Client-server web app allowing remote uploads, Plotly-based WebGL rendering, and parameterized analysis sweeps. |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 * Python 3.9 - 3.11
@@ -72,7 +72,7 @@ To run the web version of the application:
 
 ---
 
-## 🖱️ 3D Viewer Navigation Controls
+## 3D Viewer Navigation Controls
 
 ### PyQt5 OpenGL Desktop Viewport
 * **Rotate / Orbit**: Hold **Left-Click** and drag.
@@ -87,7 +87,7 @@ To run the web version of the application:
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```text
 STEP File (.stp/.step)
@@ -120,7 +120,7 @@ STEP File (.stp/.step)
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 Design-for-Manufacture/
@@ -148,7 +148,7 @@ Design-for-Manufacture/
 
 ---
 
-## 🔧 Technology Stack
+## Technology Stack
 
 | Technology | Version | Purpose |
 | :--- | :--- | :--- |
@@ -163,7 +163,7 @@ Design-for-Manufacture/
 
 ---
 
-## 🧪 Testing
+## Testing
 
 The testing suite contains unit and integration tests covering calculations and layout lifecycles.
 
@@ -186,7 +186,7 @@ python tests/test_gui_init.py
 
 ---
 
-## ⚠️ Troubleshooting
+## Troubleshooting
 
 | Issue | Solution |
 | :--- | :--- |
